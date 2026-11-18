@@ -1,14 +1,15 @@
 import { Upload } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BackupView } from './components/BackupView';
 import { BatchActionBar } from './components/BatchActionBar';
 import { CategoriesView } from './components/CategoriesView';
 import { GalleryGrid } from './components/GalleryGrid';
 import { ImageInspectorModal } from './components/ImageInspectorModal';
-import { Sidebar } from './components/Sidebar';
-import { SmartSearchBar } from './components/SmartSearchBar';
+import { SettingsModal } from './components/SettingsModal';
+import { DEFAULT_SIDEBAR_STEP, Sidebar } from './components/Sidebar';
+import { SmartSearchBar, type SearchSortOption } from './components/SmartSearchBar';
 import { TopBar } from './components/TopBar';
 import { UploadModal } from './components/UploadModal';
+import { usePinchZoom } from './hooks/usePinchZoom';
 import {
   batchUpdateImages,
   clearAllVaultData,
@@ -36,6 +37,14 @@ import type {
   ViewMode,
 } from './types/vault';
 
+const LIBRARY_SORT_OPTIONS: SearchSortOption[] = [
+  { value: 'relevance', label: 'Bộ lọc' },
+  { value: 'newest', label: 'Mới lưu nhất' },
+  { value: 'oldest', label: 'Cũ nhất' },
+  { value: 'title', label: 'Tên A–Z' },
+  { value: 'size', label: 'Dung lượng' },
+];
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>('library');
   const [isDark, setIsDark] = useState<boolean>(() => {
@@ -48,7 +57,9 @@ export default function App() {
   const [images, setImages] = useState<VaultImageView[]>([]);
   const objectUrlsRef = useRef<string[]>([]);
 
-  const [viewMode, setViewMode] = useState<ViewMode>('masonry');
+  const [viewMode, setViewMode] = useState<ViewMode>('grid');
+  const [zoomOffset, setZoomOffset] = useState<number>(0);
+  const galleryScrollRef = useRef<HTMLDivElement>(null);
   const [filters, setFilters] = useState<SearchFilterState>({
     query: '',
     categoryId: 'all',
@@ -57,13 +68,72 @@ export default function App() {
   });
 
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isDesktopSidebarCollapsed, setIsDesktopSidebarCollapsed] = useState(false);
+  const [sidebarWidthStep, setSidebarWidthStep] = useState(DEFAULT_SIDEBAR_STEP);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [droppedFiles, setDroppedFiles] = useState<File[]>([]);
   const [isDraggingGlobal, setIsDraggingGlobal] = useState(false);
+  const mobileEdgeTouchStartRef = useRef<{ x: number; y: number } | null>(null);
 
   const [inspectedImageId, setInspectedImageId] = useState<string | null>(null);
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  const [navHistory, setNavHistory] = useState<
+    Array<{ tab: AppTab; categoryId: SearchFilterState['categoryId'] }>
+  >([]);
+  const prevRouteRef = useRef<{
+    tab: AppTab;
+    categoryId: SearchFilterState['categoryId'];
+  }>({
+    tab: activeTab,
+    categoryId: filters.categoryId,
+  });
+  const isGoingBackRef = useRef(false);
+
+  useEffect(() => {
+    const prev = prevRouteRef.current;
+    if (prev.tab !== activeTab || prev.categoryId !== filters.categoryId) {
+      if (!isGoingBackRef.current) {
+        setNavHistory((hist) => [...hist.slice(-29), prev]);
+      }
+      isGoingBackRef.current = false;
+      prevRouteRef.current = { tab: activeTab, categoryId: filters.categoryId };
+    }
+  }, [activeTab, filters.categoryId]);
+
+  const isViewingSpecificCategory =
+    activeTab === 'library' &&
+    filters.categoryId !== 'all' &&
+    filters.categoryId !== 'favorites' &&
+    filters.categoryId !== 'uncategorized';
+
+  const canGoBack = isViewingSpecificCategory;
+
+  const handleGoBack = useCallback(() => {
+    if (!isViewingSpecificCategory) return;
+
+    if (navHistory.length > 0) {
+      const target = navHistory[navHistory.length - 1];
+      isGoingBackRef.current = true;
+      setNavHistory((hist) => hist.slice(0, -1));
+      setActiveTab(target.tab);
+      setFilters((prev) => ({ ...prev, categoryId: target.categoryId }));
+      return;
+    }
+
+    isGoingBackRef.current = true;
+    setActiveTab('categories');
+  }, [isViewingSpecificCategory, navHistory]);
+
+  const { cols: galleryCols } = usePinchZoom({
+    containerRef: galleryScrollRef,
+    zoomOffset,
+    onZoomOffsetChange: setZoomOffset,
+    enabled: activeTab === 'library' && viewMode !== 'list',
+  });
 
   useEffect(() => {
     const root = document.documentElement;
@@ -136,17 +206,15 @@ export default function App() {
   }, []);
 
   // Computed counts & storage stats
-  const { categoryCounts, favoriteCount, uncategorizedCount, stats } = useMemo(() => {
+  const { categoryCounts, favoriteCount, stats } = useMemo(() => {
     const cCounts: Record<string, number> = {};
     let favCount = 0;
-    let uncatCount = 0;
     let totalBytes = 0;
 
     for (const img of images) {
       totalBytes += img.size;
       if (img.isFavorite) favCount++;
-      if (!img.categoryId) uncatCount++;
-      else cCounts[img.categoryId] = (cCounts[img.categoryId] || 0) + 1;
+      if (img.categoryId) cCounts[img.categoryId] = (cCounts[img.categoryId] || 0) + 1;
     }
 
     const storageStats: StorageStats = {
@@ -158,7 +226,6 @@ export default function App() {
     return {
       categoryCounts: cCounts,
       favoriteCount: favCount,
-      uncategorizedCount: uncatCount,
       stats: storageStats,
     };
   }, [images, categories.length]);
@@ -184,11 +251,13 @@ export default function App() {
 
   // Handlers
   const handleQuickCreateCategory = async (name: string): Promise<Category> => {
+    const quickColors = ['#2563EB', '#0284C7', '#16A34A', '#D97706', '#DC2626', '#7C3AED'];
+    const randomColor = quickColors[Math.floor(Math.random() * quickColors.length)];
     const newCat: Category = {
       id: `cat-${crypto.randomUUID().slice(0, 8)}`,
       name: name.trim(),
       description: '',
-      color: '#2563EB',
+      color: randomColor,
       order: categories.length,
       createdAt: Date.now(),
     };
@@ -300,7 +369,7 @@ export default function App() {
     const dateStr = new Date().toISOString().slice(0, 10);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `khoanh-sao-luu-${dateStr}.json`;
+    a.download = `mai-huong-bakery-sao-luu-${dateStr}.json`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -324,17 +393,22 @@ export default function App() {
   );
   const inspectedImage =
     inspectedIndex >= 0 ? scoredItems[inspectedIndex].image : null;
+  const filmstripImages = useMemo(
+    () => scoredItems.map((s) => s.image),
+    [scoredItems]
+  );
 
-  const activeCategoryLabel = useMemo(() => {
+  const headerTitle = useMemo(() => {
+    if (activeTab === 'categories') return 'Danh mục';
     if (filters.categoryId === 'all') return 'Tất cả ảnh mẫu';
-    if (filters.categoryId === 'favorites') return 'Ảnh yêu thích';
+    if (filters.categoryId === 'favorites') return 'Yêu thích';
     if (filters.categoryId === 'uncategorized') return 'Chưa phân loại';
     return categories.find((c) => c.id === filters.categoryId)?.name || 'Danh mục';
-  }, [filters.categoryId, categories]);
+  }, [activeTab, filters.categoryId, categories]);
 
   return (
     <div
-      className="min-h-screen bg-zinc-50 text-zinc-950 dark:bg-zinc-950 dark:text-zinc-100"
+      className="flex h-screen flex-col overflow-hidden bg-zinc-50 text-zinc-950 dark:bg-zinc-950 dark:text-zinc-100"
       onDragOver={(e) => {
         if (e.dataTransfer.types.includes('Files')) {
           e.preventDefault();
@@ -373,189 +447,226 @@ export default function App() {
       )}
 
       <TopBar
-        activeTab={activeTab}
+        title={headerTitle}
         onSelectTab={setActiveTab}
-        onOpenUpload={() => {
-          setDroppedFiles([]);
-          setIsUploadOpen(true);
-        }}
+        onBack={handleGoBack}
+        canGoBack={canGoBack}
+        isMobileSidebarOpen={isMobileSidebarOpen}
         onToggleMobileSidebar={() => setIsMobileSidebarOpen((v) => !v)}
+        isDesktopSidebarCollapsed={isDesktopSidebarCollapsed}
+        onToggleDesktopSidebar={() => setIsDesktopSidebarCollapsed((v) => !v)}
       />
 
-      {activeTab === 'library' && (
-        <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-[1600px]">
-          <Sidebar
-            categories={categories}
-            totalCount={images.length}
-            favoriteCount={favoriteCount}
-            uncategorizedCount={uncategorizedCount}
-            categoryCounts={categoryCounts}
-            selectedCategoryId={filters.categoryId}
-            onSelectCategory={(id) =>
-              setFilters((prev) => ({ ...prev, categoryId: id }))
-            }
-            onCreateCategory={async (name) => {
-              await handleQuickCreateCategory(name);
-            }}
-            isOpenMobile={isMobileSidebarOpen}
-            onCloseMobile={() => setIsMobileSidebarOpen(false)}
-          />
+      <div
+        className="mx-auto flex min-h-0 w-full max-w-[1600px] flex-1 overflow-hidden"
+        onTouchStart={(e) => {
+          if (e.touches.length === 1 && e.touches[0].clientX <= 28) {
+            mobileEdgeTouchStartRef.current = {
+              x: e.touches[0].clientX,
+              y: e.touches[0].clientY,
+            };
+          } else {
+            mobileEdgeTouchStartRef.current = null;
+          }
+        }}
+        onTouchMove={(e) => {
+          const start = mobileEdgeTouchStartRef.current;
+          if (!start || e.touches.length !== 1) return;
+          const dx = e.touches[0].clientX - start.x;
+          const dy = Math.abs(e.touches[0].clientY - start.y);
+          if (dx > 48 && dx > dy * 1.5) {
+            mobileEdgeTouchStartRef.current = null;
+            setIsMobileSidebarOpen(true);
+          }
+        }}
+        onTouchEnd={() => {
+          mobileEdgeTouchStartRef.current = null;
+        }}
+      >
+        <Sidebar
+          activeTab={activeTab}
+          onSelectTab={setActiveTab}
+          categories={categories}
+          totalCount={images.length}
+          favoriteCount={favoriteCount}
+          categoryCounts={categoryCounts}
+          selectedCategoryId={filters.categoryId}
+          onSelectCategory={(id) =>
+            setFilters((prev) => ({ ...prev, categoryId: id }))
+          }
+          onCreateCategory={async (name) => {
+            await handleQuickCreateCategory(name);
+          }}
+          onOpenSettings={() => setIsSettingsOpen(true)}
+          isOpenMobile={isMobileSidebarOpen}
+          onCloseMobile={() => setIsMobileSidebarOpen(false)}
+          isDesktopCollapsed={isDesktopSidebarCollapsed}
+          onSetDesktopCollapsed={setIsDesktopSidebarCollapsed}
+          widthStepIndex={sidebarWidthStep}
+          onWidthStepChange={setSidebarWidthStep}
+        />
 
-          <main className="flex min-w-0 flex-1 flex-col">
-            <SmartSearchBar
-              query={filters.query}
-              onQueryChange={(q) => setFilters((prev) => ({ ...prev, query: q }))}
-              aspectFilter={filters.aspectFilter}
-              onAspectFilterChange={(aspectFilter) =>
-                setFilters((prev) => ({ ...prev, aspectFilter }))
-              }
-              viewMode={viewMode}
-              onViewModeChange={setViewMode}
-              sortBy={filters.sortBy}
-              onSortByChange={(sortBy) => setFilters((prev) => ({ ...prev, sortBy }))}
-              categories={categories}
-              isDark={isDark}
-              onToggleTheme={() => setIsDark((d) => !d)}
-              isBatchMode={isBatchMode}
-              onToggleBatchMode={() => {
-                setIsBatchMode((v) => !v);
-                setSelectedIds([]);
-              }}
-            />
+        <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          {activeTab === 'library' ? (
+            <>
+              <div
+                ref={galleryScrollRef}
+                className="min-h-0 flex-1 overflow-y-auto touch-pan-y p-4 pb-28 sm:p-6 sm:pb-28"
+              >
+                {isBatchMode && (
+                  <BatchActionBar
+                    selectedCount={selectedIds.length}
+                    categories={categories}
+                    onSelectAll={() =>
+                      setSelectedIds(scoredItems.map((s) => s.image.id))
+                    }
+                    onClearSelection={() => setSelectedIds([])}
+                    onAssignCategory={async (catId) => {
+                      await batchUpdateImages(selectedIds, (img) => ({
+                        ...img,
+                        categoryId: catId,
+                      }));
+                      setSelectedIds([]);
+                      await reloadVault();
+                    }}
+                    onDeleteSelected={async () => {
+                      await deleteImagesByIds(selectedIds);
+                      setSelectedIds([]);
+                      setIsBatchMode(false);
+                      await reloadVault();
+                    }}
+                  />
+                )}
 
-            <div className="flex-1 p-4 sm:p-6">
-              {/* Context Heading & Active Filter Summary */}
-              <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-                <div className="flex flex-wrap items-center gap-2.5">
-                  <h1 className="font-display text-lg font-bold tracking-tight text-zinc-950 dark:text-zinc-50">
-                    {activeCategoryLabel}
-                  </h1>
-                  <span aria-hidden="true" className="text-zinc-300 dark:text-zinc-700">
-                    ·
-                  </span>
-                  <span className="tabular-nums text-sm text-zinc-500 dark:text-zinc-400">
-                    {scoredItems.length} kết quả
-                  </span>
-                </div>
-
-                {hasActiveFilters && (
-                  <button
-                    type="button"
-                    onClick={clearAllFilters}
-                    className="px-2 py-1 text-xs font-medium text-zinc-500 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-100"
-                  >
-                    Xóa bộ lọc
-                  </button>
+                {isLoading ? (
+                  <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
+                    {[0, 1, 2, 3].map((n) => (
+                      <div
+                        key={n}
+                        className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950"
+                      >
+                        <div className="aspect-[4/3] animate-pulse bg-zinc-200 dark:bg-zinc-800" />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <GalleryGrid
+                    items={scoredItems}
+                    categories={categories}
+                    viewMode={viewMode}
+                    columns={galleryCols}
+                    isBatchMode={isBatchMode}
+                    selectedIds={selectedIds}
+                    onToggleSelect={(id) =>
+                      setSelectedIds((prev) =>
+                        prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+                      )
+                    }
+                    onOpenImage={(id) => setInspectedImageId(id)}
+                    onToggleFavorite={handleToggleFavorite}
+                    onOpenUpload={() => {
+                      setDroppedFiles([]);
+                      setIsUploadOpen(true);
+                    }}
+                    hasActiveFilters={hasActiveFilters}
+                    onClearFilters={clearAllFilters}
+                  />
                 )}
               </div>
 
-              {isBatchMode && (
-                <BatchActionBar
-                  selectedCount={selectedIds.length}
-                  categories={categories}
-                  onSelectAll={() =>
-                    setSelectedIds(scoredItems.map((s) => s.image.id))
+              {/* Bottom-Left Search Button / Bottom Frosted Search Bar */}
+              <SmartSearchBar
+                isOpen={isSearchOpen}
+                onOpen={() => setIsSearchOpen(true)}
+                onClose={() => setIsSearchOpen(false)}
+                query={filters.query}
+                onQueryChange={(q) => setFilters((prev) => ({ ...prev, query: q }))}
+                placeholder="Tìm từ khóa, cat:danh mục, ratio:ngang (hỗ trợ không dấu)..."
+                ariaLabel="Tìm kiếm thông minh theo từ khóa"
+                viewMode={viewMode}
+                onViewModeChange={setViewMode}
+                sortValue={filters.sortBy}
+                sortOptions={LIBRARY_SORT_OPTIONS}
+                onSortChange={(sortBy) =>
+                  setFilters((prev) => ({ ...prev, sortBy: sortBy as SearchFilterState['sortBy'] }))
+                }
+                categories={categories}
+                enableSmartHints
+                isBatchMode={isBatchMode}
+                onToggleBatchMode={() => {
+                  setIsBatchMode((v) => !v);
+                  setSelectedIds([]);
+                }}
+                onAddClick={() => {
+                  setDroppedFiles([]);
+                  setIsUploadOpen(true);
+                }}
+                addTitle="Thêm ảnh mẫu"
+                disableShortcuts={Boolean(
+                  isUploadOpen || isSettingsOpen || inspectedImageId
+                )}
+              />
+            </>
+          ) : (
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <CategoriesView
+                categories={categories}
+                images={images}
+                zoomOffset={zoomOffset}
+                onZoomOffsetChange={setZoomOffset}
+                isSearchOpen={isSearchOpen}
+                onOpenSearch={() => setIsSearchOpen(true)}
+                onCloseSearch={() => setIsSearchOpen(false)}
+                disableShortcuts={Boolean(isUploadOpen || isSettingsOpen)}
+                onCreateCategory={handleFullCreateCategory}
+                onUpdateCategory={async (cat) => {
+                  await saveCategory(cat);
+                  await reloadVault();
+                }}
+                onDeleteCategory={async (id) => {
+                  await deleteCategoryAndReassign(id);
+                  if (filters.categoryId === id) {
+                    setFilters((prev) => ({ ...prev, categoryId: 'all' }));
                   }
-                  onClearSelection={() => setSelectedIds([])}
-                  onAssignCategory={async (catId) => {
-                    await batchUpdateImages(selectedIds, (img) => ({
-                      ...img,
-                      categoryId: catId,
-                    }));
-                    setSelectedIds([]);
-                    await reloadVault();
-                  }}
-                  onDeleteSelected={async () => {
-                    await deleteImagesByIds(selectedIds);
-                    setSelectedIds([]);
-                    setIsBatchMode(false);
-                    await reloadVault();
-                  }}
-                />
-              )}
-
-              {isLoading ? (
-                <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
-                  {[0, 1, 2, 3].map((n) => (
-                    <div
-                      key={n}
-                      className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950"
-                    >
-                      <div className="aspect-[4/3] animate-pulse bg-zinc-200 dark:bg-zinc-800" />
-                      <div className="space-y-2 p-3.5">
-                        <div className="h-4 w-3/4 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-                        <div className="h-3 w-1/2 animate-pulse rounded bg-zinc-100 dark:bg-zinc-900" />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <GalleryGrid
-                  items={scoredItems}
-                  categories={categories}
-                  viewMode={viewMode}
-                  isBatchMode={isBatchMode}
-                  selectedIds={selectedIds}
-                  onToggleSelect={(id) =>
-                    setSelectedIds((prev) =>
-                      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-                    )
+                  await reloadVault();
+                }}
+                onDeleteCategories={async (ids) => {
+                  for (const id of ids) {
+                    await deleteCategoryAndReassign(id);
                   }
-                  onOpenImage={(id) => setInspectedImageId(id)}
-                  onToggleFavorite={handleToggleFavorite}
-                  onOpenUpload={() => {
-                    setDroppedFiles([]);
-                    setIsUploadOpen(true);
-                  }}
-                  hasActiveFilters={hasActiveFilters}
-                  onClearFilters={clearAllFilters}
-                />
-              )}
+                  if (ids.includes(filters.categoryId)) {
+                    setFilters((prev) => ({ ...prev, categoryId: 'all' }));
+                  }
+                  await reloadVault();
+                }}
+                onOpenCategoryInLibrary={(catId) => {
+                  setFilters((prev) => ({ ...prev, categoryId: catId }));
+                  setActiveTab('library');
+                }}
+              />
             </div>
-          </main>
-        </div>
-      )}
+          )}
+        </main>
+      </div>
 
-      {activeTab === 'categories' && (
-        <CategoriesView
-          categories={categories}
-          categoryCounts={categoryCounts}
-          uncategorizedCount={uncategorizedCount}
-          onCreateCategory={handleFullCreateCategory}
-          onUpdateCategory={async (cat) => {
-            await saveCategory(cat);
-            await reloadVault();
-          }}
-          onDeleteCategory={async (id) => {
-            await deleteCategoryAndReassign(id);
-            if (filters.categoryId === id) {
-              setFilters((prev) => ({ ...prev, categoryId: 'all' }));
-            }
-            await reloadVault();
-          }}
-          onOpenCategoryInLibrary={(catId) => {
-            setFilters((prev) => ({ ...prev, categoryId: catId }));
-            setActiveTab('library');
-          }}
-        />
-      )}
-
-      {activeTab === 'backup' && (
-        <BackupView
-          stats={stats}
-          onExportBackup={handleExportBackup}
-          onImportBackup={handleImportBackup}
-          onRestoreSampleVault={async () => {
-            await seedSampleVault(true);
-            await reloadVault();
-          }}
-          onClearAllData={async () => {
-            await clearAllVaultData();
-            clearAllFilters();
-            await reloadVault();
-          }}
-        />
-      )}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        isDark={isDark}
+        onSetTheme={setIsDark}
+        stats={stats}
+        onExportBackup={handleExportBackup}
+        onImportBackup={handleImportBackup}
+        onRestoreSampleVault={async () => {
+          await seedSampleVault(true);
+          await reloadVault();
+        }}
+        onClearAllData={async () => {
+          await clearAllVaultData();
+          clearAllFilters();
+          await reloadVault();
+        }}
+      />
 
       <UploadModal
         isOpen={isUploadOpen}
@@ -578,9 +689,11 @@ export default function App() {
 
       <ImageInspectorModal
         image={inspectedImage}
+        images={filmstripImages}
         categories={categories}
         hasPrev={inspectedIndex > 0}
         hasNext={inspectedIndex >= 0 && inspectedIndex < scoredItems.length - 1}
+        onSelectImage={(id) => setInspectedImageId(id)}
         onPrev={() => {
           if (inspectedIndex > 0) {
             setInspectedImageId(scoredItems[inspectedIndex - 1].image.id);

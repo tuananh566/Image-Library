@@ -6,7 +6,7 @@ export type ViewMode = 'grid' | 'masonry' | 'list';
 
 export type SortOption = 'newest' | 'oldest' | 'title' | 'relevance' | 'size';
 
-export type AppTab = 'library' | 'categories' | 'backup';
+export type AppTab = 'library' | 'categories';
 
 export interface Category {
   id: string;

@@ -1,5 +1,6 @@
 import { Check, Heart, ImageIcon, Upload } from 'lucide-react';
 import { useState } from 'react';
+import { GRID_COLS_CLASS, MASONRY_COLS_CLASS } from '../hooks/usePinchZoom';
 import { formatFileSize } from '../lib/imageProcessor';
 import type { Category, ScoredImage, ViewMode } from '../types/vault';
 
@@ -7,6 +8,7 @@ interface GalleryGridProps {
   items: ScoredImage[];
   categories: Category[];
   viewMode: ViewMode;
+  columns?: number;
   isBatchMode: boolean;
   selectedIds: string[];
   onToggleSelect: (id: string) => void;
@@ -53,6 +55,7 @@ export function GalleryGrid({
   items,
   categories,
   viewMode,
+  columns,
   isBatchMode,
   selectedIds,
   onToggleSelect,
@@ -213,26 +216,30 @@ export function GalleryGrid({
   }
 
   const isMasonry = viewMode === 'masonry';
+  const isDense = (columns ?? 4) >= 5;
+  const gridColsClass = columns
+    ? GRID_COLS_CLASS[columns] || 'grid-cols-4'
+    : 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4';
+  const masonryColsClass = columns
+    ? MASONRY_COLS_CLASS[columns] || 'columns-4'
+    : 'columns-1 sm:columns-2 md:columns-3 xl:columns-4';
 
   return (
     <div
       className={
         isMasonry
-          ? 'columns-1 gap-5 sm:columns-2 md:columns-3 xl:columns-4'
-          : 'grid grid-cols-1 gap-5 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4'
+          ? `${masonryColsClass} ${isDense ? 'gap-3' : 'gap-5'}`
+          : `grid ${gridColsClass} ${isDense ? 'gap-3' : 'gap-5'}`
       }
     >
-      {items.map(({ image, matchedFields }) => {
+      {items.map(({ image }) => {
         const isSelected = selectedIds.includes(image.id);
-        const catName = image.categoryId
-          ? categoryMap.get(image.categoryId) || 'Chưa phân loại'
-          : 'Chưa phân loại';
 
         return (
           <article
             key={image.id}
             className={`group relative overflow-hidden rounded-xl border bg-white transition-colors duration-150 dark:bg-zinc-950 ${
-              isMasonry ? 'mb-5 break-inside-avoid' : 'flex flex-col'
+              isMasonry ? `${isDense ? 'mb-3' : 'mb-5'} break-inside-avoid` : 'flex flex-col'
             } ${
               isSelected
                 ? 'border-blue-600 ring-2 ring-blue-600/20 dark:border-blue-500'
@@ -300,34 +307,6 @@ export function GalleryGrid({
                   fill={image.isFavorite ? 'currentColor' : 'none'}
                 />
               </button>
-            </div>
-
-            {/* Zero-pill Clean Metadata Body */}
-            <div
-              onClick={() =>
-                isBatchMode ? onToggleSelect(image.id) : onOpenImage(image.id)
-              }
-              className="flex cursor-pointer flex-col gap-1 p-3.5"
-            >
-              <h3 className="line-clamp-1 font-display text-sm font-semibold text-zinc-950 dark:text-zinc-100">
-                {image.title}
-              </h3>
-
-              <div className="flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
-                <span className="truncate font-medium text-zinc-700 dark:text-zinc-300">
-                  {catName}
-                </span>
-                <span aria-hidden="true">·</span>
-                <span className="tabular-nums shrink-0 font-mono text-[11px]">
-                  {image.width}×{image.height}
-                </span>
-              </div>
-
-              {matchedFields.length > 0 && (
-                <p className="mt-0.5 text-[11px] font-medium text-blue-600 dark:text-blue-400">
-                  Khớp: {matchedFields.join(', ')}
-                </p>
-              )}
             </div>
           </article>
         );

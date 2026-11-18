@@ -12,6 +12,7 @@ interface BackupViewProps {
   }>;
   onRestoreSampleVault: () => Promise<void>;
   onClearAllData: () => Promise<void>;
+  embedded?: boolean;
 }
 
 export function BackupView({
@@ -20,6 +21,7 @@ export function BackupView({
   onImportBackup,
   onRestoreSampleVault,
   onClearAllData,
+  embedded = false,
 }: BackupViewProps) {
   const importInputRef = useRef<HTMLInputElement>(null);
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge');
@@ -96,11 +98,17 @@ export function BackupView({
   };
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 space-y-6">
+    <div className={embedded ? 'space-y-5' : 'mx-auto max-w-4xl px-4 py-8 sm:px-6 space-y-6'}>
       <div>
-        <h1 className="font-display text-2xl font-bold tracking-tight text-zinc-950 dark:text-zinc-50">
+        <h2
+          className={
+            embedded
+              ? 'font-display text-base font-semibold text-zinc-950 dark:text-zinc-50'
+              : 'font-display text-2xl font-bold tracking-tight text-zinc-950 dark:text-zinc-50'
+          }
+        >
           Lưu trữ cục bộ & Sao lưu
-        </h1>
+        </h2>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
           Toàn bộ ảnh gốc, danh mục và ghi chú được lưu trữ trực tiếp trong IndexedDB của trình duyệt này. Không gửi dữ liệu ra nền tảng ngoài.
         </p>
