@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <rect width="64" height="64" rx="16" fill="#18181B" />
+  <rect x="1.5" y="1.5" width="61" height="61" rx="14.5" stroke="#27272A" stroke-width="3" />
+  <!-- Candle Flame -->
+  <path d="M32 10C32 10 36 14.2 36 16.8C36 19 34.2 20.6 32 20.6C29.8 20.6 28 19 28 16.8C28 14.2 32 10 32 10Z" fill="#FBBF24" />
+  <circle cx="32" cy="17.2" r="1.6" fill="#FEF3C7" />
+  <!-- Candle Stick -->
+  <rect x="29.5" y="21.5" width="5" height="7.5" rx="2" fill="#FDA4AF" />
+  <!-- Cake Top Layer -->
+  <path d="M18 31C18 28.8 19.8 27 22 27H42C44.2 27 46 28.8 46 31V37H18V31Z" fill="#FDE68A" />
+  <!-- Pink Frosting Drip -->
+  <path d="M18 30.5C18 28.6 19.6 27 21.5 27H42.5C44.4 27 46 28.6 46 30.5V32.5C44.2 32.5 43.4 35 41.5 35C39.6 35 38.8 32.5 36.8 32.5C34.8 32.5 34 35.5 32 35.5C30 35.5 29.2 32.5 27.2 32.5C25.2 32.5 24.4 35 22.5 35C20.6 35 19.8 32.5 18 32.5V30.5Z" fill="#FB7185" />
+  <!-- Cake Bottom Layer -->
+  <path d="M13 40C13 38.3 14.3 37 16 37H48C49.7 37 51 38.3 51 40V49C51 50.7 49.7 52 48 52H16C14.3 52 13 50.7 13 49V40Z" fill="#FEF3C7" />
+  <!-- Cream Middle Band -->
+  <rect x="13" y="42.5" width="38" height="3.5" fill="#F472B6" />
+  <!-- Plate -->
+  <rect x="10" y="51.5" width="44" height="3" rx="1.5" fill="#A1A1AA" />
+</svg>
