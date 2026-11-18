@@ -374,25 +374,25 @@ export function OrderModal({
             </div>
 
             {/* Pickup Time, Price & Deposit */}
-            <div className="space-y-2.5">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <div>
-                  <label
-                    htmlFor="order-pickup-time"
-                    className="mb-1.5 block text-xs font-semibold text-zinc-300"
-                  >
-                    Thời gian lấy
-                  </label>
-                  <input
-                    id="order-pickup-time"
-                    type="datetime-local"
-                    value={pickupTime}
-                    onChange={(e) => setPickupTime(e.target.value)}
-                    className="tabular-nums h-10 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
+            <div className="space-y-4">
+              <div className="min-w-0">
+                <label
+                  htmlFor="order-pickup-time"
+                  className="mb-1.5 block text-xs font-semibold text-zinc-300"
+                >
+                  Thời gian lấy
+                </label>
+                <input
+                  id="order-pickup-time"
+                  type="datetime-local"
+                  value={pickupTime}
+                  onChange={(e) => setPickupTime(e.target.value)}
+                  className="tabular-nums h-10 w-full min-w-0 rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
 
-                <div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="min-w-0">
                   <label
                     htmlFor="order-product-price"
                     className="mb-1.5 block text-xs font-semibold text-zinc-300"
@@ -415,7 +415,7 @@ export function OrderModal({
                   </div>
                 </div>
 
-                <div>
+                <div className="min-w-0">
                   <div className="mb-1.5 flex items-center justify-between gap-2">
                     <label
                       htmlFor="order-deposit-amount"
@@ -452,7 +452,7 @@ export function OrderModal({
 
               {numericPrice > 0 && (
                 <div
-                  className={`flex items-center justify-between rounded-lg border px-3.5 py-2 text-xs ${
+                  className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3.5 py-2 text-xs ${
                     isPaidInFull
                       ? 'border-emerald-900/70 bg-emerald-950/35 text-emerald-300'
                       : 'border-amber-900/60 bg-amber-950/30 text-amber-200'

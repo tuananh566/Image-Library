@@ -669,6 +669,7 @@ function ImageInspectorContent({
           {/* Interactive Zoomable & Pannable Stage */}
           <motion.div
             ref={stageRef}
+            data-image-stage="true"
             initial={{
               opacity: 0,
               x: zoomOrigin.x,
