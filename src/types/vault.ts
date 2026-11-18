@@ -8,6 +8,13 @@ export type SortOption = 'newest' | 'oldest' | 'title' | 'relevance' | 'size';
 
 export type AppTab = 'library' | 'categories' | 'orders';
 
+export type OrderFilterMode =
+  | 'unreceived'
+  | 'not-ready'
+  | 'received'
+  | 'all'
+  | 'by-date';
+
 export interface Category {
   id: string;
   name: string;

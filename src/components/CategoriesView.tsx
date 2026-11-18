@@ -1,32 +1,11 @@
-import {
-  Check,
-  Pencil,
-  Plus,
-  Trash2,
-  X,
-} from 'lucide-react';
+import { Check, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { normalizeVietnamese } from '../lib/smartSearch';
-import type { Category, VaultImageView, ViewMode } from '../types/vault';
-import { SmartSearchBar, type SearchSortOption } from './SmartSearchBar';
-
-type CategorySortOption = 'relevance' | 'newest' | 'oldest' | 'title' | 'count';
-
-const CATEGORY_SORT_OPTIONS: SearchSortOption[] = [
-  { value: 'relevance', label: 'Bộ lọc' },
-  { value: 'newest', label: 'Mới tạo nhất' },
-  { value: 'oldest', label: 'Cũ nhất' },
-  { value: 'title', label: 'Tên A–Z' },
-  { value: 'count', label: 'Nhiều ảnh nhất' },
-];
+import type { Category, VaultImageView } from '../types/vault';
+import { FloatingOrdersCapsule } from './FloatingOrdersCapsule';
 
 interface CategoriesViewProps {
   categories: Category[];
   images: VaultImageView[];
-  isSearchOpen: boolean;
-  onOpenSearch: () => void;
-  onCloseSearch: () => void;
-  disableShortcuts?: boolean;
   onCreateCategory: (data: {
     name: string;
     description: string;
@@ -34,9 +13,11 @@ interface CategoriesViewProps {
   }) => Promise<void>;
   onUpdateCategory: (category: Category) => Promise<void>;
   onDeleteCategory: (id: string) => Promise<void>;
-  onDeleteCategories?: (ids: string[]) => Promise<void>;
   onOpenCategoryInLibrary: (categoryId: string, sourceRect?: DOMRect) => void;
   canManage?: boolean;
+  showOrdersMobile: boolean;
+  showOrdersDesktop: boolean;
+  onOpenOrders: () => void;
 }
 
 const PRESET_COLORS = [
@@ -60,24 +41,15 @@ function getRandomPresetColor(exclude?: string): string {
 export function CategoriesView({
   categories,
   images,
-  isSearchOpen,
-  onOpenSearch,
-  onCloseSearch,
-  disableShortcuts = false,
   onCreateCategory,
   onUpdateCategory,
   onDeleteCategory,
-  onDeleteCategories,
   onOpenCategoryInLibrary,
   canManage = true,
+  showOrdersMobile,
+  showOrdersDesktop,
+  onOpenOrders,
 }: CategoriesViewProps) {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [sortBy, setSortBy] = useState<CategorySortOption>('relevance');
-  const [viewMode, setViewMode] = useState<ViewMode>('grid');
-  const [isBatchMode, setIsBatchMode] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [confirmBatchDelete, setConfirmBatchDelete] = useState(false);
-
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -93,9 +65,6 @@ export function CategoriesView({
 
   useEffect(() => {
     if (!canManage) {
-      setIsBatchMode(false);
-      setSelectedIds([]);
-      setConfirmBatchDelete(false);
       setIsCreateOpen(false);
       setEditingCategory(null);
     }
@@ -123,37 +92,10 @@ export function CategoriesView({
     return map;
   }, [images]);
 
-  const filteredCategories = useMemo(() => {
-    const normQuery = normalizeVietnamese(searchQuery);
-    const terms = normQuery ? normQuery.split(/\s+/).filter(Boolean) : [];
-
-    const matched = terms.length
-      ? categories.filter((cat) => {
-          const hay = normalizeVietnamese(`${cat.name} ${cat.description}`);
-          return terms.every((t) => hay.includes(t));
-        })
-      : [...categories];
-
-    matched.sort((a, b) => {
-      if (sortBy === 'newest') return b.createdAt - a.createdAt;
-      if (sortBy === 'oldest') return a.createdAt - b.createdAt;
-      if (sortBy === 'title') return a.name.localeCompare(b.name, 'vi');
-      if (sortBy === 'count') {
-        const countA = imagesByCategory.get(a.id)?.length || 0;
-        const countB = imagesByCategory.get(b.id)?.length || 0;
-        return countB - countA;
-      }
-      return a.order - b.order;
-    });
-
-    return matched;
-  }, [categories, searchQuery, sortBy, imagesByCategory]);
-
-  const toggleSelect = (id: string) => {
-    setSelectedIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
-  };
+  const orderedCategories = useMemo(
+    () => [...categories].sort((a, b) => a.order - b.order),
+    [categories]
+  );
 
   const openCreateModal = () => {
     if (!canManage) return;
@@ -219,212 +161,24 @@ export function CategoriesView({
     }
   };
 
-  const handleBatchDelete = async () => {
-    if (!canManage || selectedIds.length === 0) return;
-    if (onDeleteCategories) {
-      await onDeleteCategories(selectedIds);
-    } else {
-      for (const id of selectedIds) {
-        await onDeleteCategory(id);
-      }
-    }
-    setSelectedIds([]);
-    setConfirmBatchDelete(false);
-    setIsBatchMode(false);
-  };
-
-  const isMasonry = viewMode === 'masonry';
   const gridColsClass = 'grid-cols-2 md:portrait:grid-cols-2 md:landscape:grid-cols-3';
-  const masonryColsClass = 'columns-2 md:portrait:columns-2 md:landscape:columns-3';
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
       {/* Scrollable Category Area */}
       <div className="min-h-0 flex-1 overflow-y-auto touch-pan-y p-4 pb-28 sm:p-6 sm:pb-28">
-        {/* Batch Selection Bar */}
-        {isBatchMode && (
-          selectedIds.length === 0 ? (
-            <div className="mb-4 flex items-center justify-between rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-2.5 text-xs dark:border-zinc-800 dark:bg-zinc-900">
-              <span className="text-zinc-600 dark:text-zinc-400">
-                Chế độ chọn nhiều đang bật — nhấp vào các danh mục để chọn hàng loạt.
-              </span>
-              <button
-                type="button"
-                onClick={() => setSelectedIds(filteredCategories.map((c) => c.id))}
-                className="font-medium text-blue-600 hover:underline dark:text-blue-400"
-              >
-                Chọn tất cả danh mục đang hiển thị
-              </button>
-            </div>
-          ) : (
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50/70 px-4 py-2.5 dark:border-blue-900 dark:bg-blue-950/40">
-              <div className="flex items-center gap-3">
-                <span className="tabular-nums text-xs font-semibold text-blue-800 dark:text-blue-200">
-                  Đã chọn {selectedIds.length} danh mục
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setSelectedIds(filteredCategories.map((c) => c.id))}
-                  className="text-xs font-medium text-blue-700 hover:underline dark:text-blue-300"
-                >
-                  Chọn tất cả
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedIds([])}
-                  className="text-xs text-zinc-600 hover:underline dark:text-zinc-400"
-                >
-                  Bỏ chọn
-                </button>
-              </div>
-
-              <div>
-                {confirmBatchDelete ? (
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setConfirmBatchDelete(false)}
-                      className="inline-flex h-8 items-center rounded-lg border border-zinc-300 bg-white px-2.5 text-xs font-medium dark:border-zinc-700 dark:bg-zinc-900"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleBatchDelete}
-                      className="h-8 rounded-lg bg-rose-600 px-3 text-xs font-medium text-white hover:bg-rose-700"
-                    >
-                      Xóa {selectedIds.length} danh mục
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setConfirmBatchDelete(true)}
-                    className="inline-flex h-8 items-center gap-1 rounded-lg border border-rose-200 bg-white px-2.5 text-xs font-medium text-rose-600 hover:bg-rose-50 dark:border-rose-900 dark:bg-zinc-900 dark:text-rose-400"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    <span>Xóa</span>
-                  </button>
-                )}
-              </div>
-            </div>
-          )
-        )}
-
-        {filteredCategories.length === 0 ? (
+        {orderedCategories.length === 0 ? (
           <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-6 py-12 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
-            {searchQuery.trim()
-              ? 'Không tìm thấy danh mục nào khớp từ khóa.'
-              : canManage
+            {canManage
               ? 'Bạn chưa tạo danh mục nào. Nhấn nút dấu + ở góc dưới bên phải để tạo danh mục mới.'
               : 'Chưa có danh mục nào. Vào Cài đặt để xác thực Admin nếu cần tạo danh mục mới.'}
           </div>
-        ) : viewMode === 'list' ? (
-          <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-left text-sm">
-                <thead>
-                  <tr className="border-b border-zinc-200 bg-zinc-50/70 text-xs font-medium text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-400">
-                    {canManage && isBatchMode && <th className="w-10 px-3 py-2.5">Chọn</th>}
-                    <th className="px-4 py-2.5">Danh mục</th>
-                    <th className="px-4 py-2.5 text-right">Số ảnh</th>
-                    {canManage && <th className="w-14 px-4 py-2.5 text-right">Sửa</th>}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
-                  {filteredCategories.map((cat) => {
-                    const catImages = imagesByCategory.get(cat.id) || [];
-                    const isSelected = selectedIds.includes(cat.id);
-
-                    return (
-                      <tr
-                        key={cat.id}
-                        data-category-card={cat.id}
-                        onClick={(e) =>
-                          isBatchMode
-                            ? toggleSelect(cat.id)
-                            : onOpenCategoryInLibrary(cat.id, e.currentTarget.getBoundingClientRect())
-                        }
-                        className={`cursor-pointer transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/60 ${
-                          isSelected ? 'bg-blue-50/60 dark:bg-blue-950/30' : ''
-                        }`}
-                      >
-                        {isBatchMode && (
-                          <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
-                            <button
-                              type="button"
-                              onClick={() => toggleSelect(cat.id)}
-                              aria-label={`Chọn ${cat.name}`}
-                              className={`flex h-5 w-5 items-center justify-center rounded border ${
-                                isSelected
-                                  ? 'border-blue-600 bg-blue-600 text-white'
-                                  : 'border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-900'
-                              }`}
-                            >
-                              {isSelected && <Check className="h-3.5 w-3.5" />}
-                            </button>
-                          </td>
-                        )}
-                        <td className="px-4 py-2.5">
-                          <div className="flex items-center gap-3">
-                            <div className="flex h-11 w-14 shrink-0 items-center justify-center overflow-hidden rounded-md border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900">
-                              {catImages[0] ? (
-                                <img
-                                  src={catImages[0].thumbnailUrl}
-                                  alt={cat.name}
-                                  className="h-full w-full object-cover"
-                                />
-                              ) : (
-                                <span
-                                  aria-hidden="true"
-                                  className="h-4 w-4 shrink-0 rounded-full"
-                                  style={{ backgroundColor: cat.color || '#2563EB' }}
-                                />
-                              )}
-                            </div>
-                            <span className="truncate font-medium text-zinc-900 dark:text-zinc-100">
-                              {cat.name}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums text-zinc-600 dark:text-zinc-400 whitespace-nowrap">
-                          {catImages.length}
-                        </td>
-                        {canManage && (
-                          <td
-                            className="px-4 py-2.5 text-right"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <button
-                              type="button"
-                              onClick={() => openEditModal(cat)}
-                              aria-label={`Chỉnh sửa ${cat.name}`}
-                              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </button>
-                          </td>
-                        )}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
         ) : (
-          <div
-            className={
-              isMasonry
-                ? `${masonryColsClass} gap-3.5 sm:gap-5`
-                : `grid ${gridColsClass} gap-3.5 sm:gap-5`
-            }
-          >
-            {filteredCategories.map((cat) => {
+          <div className={`grid ${gridColsClass} gap-3.5 sm:gap-5`}>
+            {orderedCategories.map((cat) => {
               const catImages = imagesByCategory.get(cat.id) || [];
               const previewImages = catImages.slice(0, 4);
               const remainingCount = Math.max(0, catImages.length - 4);
-              const isSelected = selectedIds.includes(cat.id);
 
               return (
                 <article
@@ -433,28 +187,15 @@ export function CategoriesView({
                   role="button"
                   tabIndex={0}
                   onClick={(e) =>
-                    isBatchMode
-                      ? toggleSelect(cat.id)
-                      : onOpenCategoryInLibrary(cat.id, e.currentTarget.getBoundingClientRect())
+                    onOpenCategoryInLibrary(cat.id, e.currentTarget.getBoundingClientRect())
                   }
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
-                      if (isBatchMode) toggleSelect(cat.id);
-                      else onOpenCategoryInLibrary(cat.id, e.currentTarget.getBoundingClientRect());
+                      onOpenCategoryInLibrary(cat.id, e.currentTarget.getBoundingClientRect());
                     }
                   }}
-                  className={`group relative w-full cursor-pointer overflow-hidden rounded-xl border bg-zinc-100 transition-[transform,border-color,box-shadow] duration-150 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-blue-600 dark:bg-zinc-900 ${
-                    isMasonry
-                      ? 'mb-3.5 break-inside-avoid sm:mb-5'
-                      : 'aspect-[4/3]'
-                  } ${
-                    isMasonry && previewImages.length !== 1 ? 'aspect-[4/3]' : ''
-                  } ${
-                    isSelected
-                      ? 'border-blue-600 ring-2 ring-blue-600/20 dark:border-blue-500'
-                      : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700'
-                  }`}
+                  className="group relative aspect-[4/3] w-full cursor-pointer overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 transition-[transform,border-color,box-shadow] duration-150 hover:-translate-y-0.5 hover:border-zinc-300 hover:shadow-md active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-blue-600 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-700"
                 >
                   {/* Image / Collage Preview */}
                   {previewImages.length === 0 ? (
@@ -472,9 +213,7 @@ export function CategoriesView({
                       src={previewImages[0].thumbnailUrl}
                       alt={cat.name}
                       loading="lazy"
-                      className={`w-full transition-transform duration-200 group-hover:scale-[1.02] ${
-                        isMasonry ? 'block h-auto' : 'h-full object-cover'
-                      }`}
+                      className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
                     />
                   ) : previewImages.length === 2 ? (
                     <div className="grid h-full w-full grid-cols-2 gap-0.5">
@@ -532,20 +271,6 @@ export function CategoriesView({
                     </div>
                   )}
 
-                  {isBatchMode && (
-                    <div className="absolute left-2.5 top-2.5">
-                      <span
-                        className={`flex h-6 w-6 items-center justify-center rounded-md border transition-colors ${
-                          isSelected
-                            ? 'border-blue-600 bg-blue-600 text-white'
-                            : 'border-white/80 bg-black/40 text-transparent'
-                        }`}
-                      >
-                        <Check className="h-3.5 w-3.5" />
-                      </span>
-                    </div>
-                  )}
-
                   {/* Frosted Category Name Overlay inside image */}
                   <div className="pointer-events-none absolute inset-x-0 bottom-0 p-2 sm:p-2.5">
                     <span className="inline-block max-w-full truncate rounded-lg bg-black/45 px-2 py-0.5 font-display text-xs font-semibold text-white backdrop-blur-xs sm:px-2.5 sm:py-1 sm:text-sm">
@@ -575,32 +300,15 @@ export function CategoriesView({
         )}
       </div>
 
-      {/* Combined Bottom Frosted Search + Add Capsule / Bottom Frosted Search Bar */}
-      <SmartSearchBar
-        isOpen={isSearchOpen}
-        onOpen={onOpenSearch}
-        onClose={onCloseSearch}
-        query={searchQuery}
-        onQueryChange={setSearchQuery}
-        placeholder="Tìm kiếm danh mục (hỗ trợ không dấu)..."
-        ariaLabel="Tìm kiếm danh mục"
-        viewMode={viewMode}
-        onViewModeChange={setViewMode}
-        sortValue={sortBy}
-        sortOptions={CATEGORY_SORT_OPTIONS}
-        onSortChange={(val) => setSortBy(val as CategorySortOption)}
-        isBatchMode={isBatchMode}
-        onToggleBatchMode={() => {
-          if (!canManage) return;
-          setIsBatchMode((v) => !v);
-          setSelectedIds([]);
-          setConfirmBatchDelete(false);
-        }}
+      {/* Bottom-Right Orders (when sidebar/mục lục is closed) & Create Album Capsule */}
+      <FloatingOrdersCapsule
+        showOrdersMobile={showOrdersMobile}
+        showOrdersDesktop={showOrdersDesktop}
+        onOpenOrders={onOpenOrders}
+        canAdd={canManage}
         onAddClick={openCreateModal}
         addTitle="Tạo danh mục mới"
-        canAdd={canManage}
-        canBatch={canManage}
-        disableShortcuts={disableShortcuts || isCreateOpen || Boolean(editingCategory)}
+        addAriaLabel="Tạo danh mục mới"
       />
 
       {/* Create Category Modal */}

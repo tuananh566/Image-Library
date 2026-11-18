@@ -7,6 +7,7 @@ interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   isAdmin: boolean;
+  adminExpiresAt?: number | null;
   onAuthenticateAdmin: (password: string) => boolean;
   onLogoutAdmin: () => void;
   stats: StorageStats;
@@ -31,6 +32,7 @@ export function SettingsModal({
   isOpen,
   onClose,
   isAdmin,
+  adminExpiresAt = null,
   onAuthenticateAdmin,
   onLogoutAdmin,
   stats,
@@ -44,18 +46,28 @@ export function SettingsModal({
   const [adminPassword, setAdminPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
     if (!isOpen) return;
     setAdminPassword('');
     setShowPassword(false);
     setAuthError(null);
+    setNowMs(Date.now());
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
+
+  useEffect(() => {
+    if (!isOpen || !isAdmin || !adminExpiresAt) return;
+    const id = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 15_000);
+    return () => window.clearInterval(id);
+  }, [isOpen, isAdmin, adminExpiresAt]);
 
   if (!isOpen) return null;
 
@@ -124,8 +136,15 @@ export function SettingsModal({
                   </div>
                   <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
                     {isAdmin
-                      ? 'Thiết bị này đang có quyền Admin và được phép thêm ảnh mẫu mới.'
-                      : 'Mặc định thiết bị chỉ có quyền xem. Nhập mật khẩu Admin để bật nút thêm ảnh (+).'}
+                      ? `Thiết bị này đang có quyền Admin${
+                          adminExpiresAt
+                            ? ` (tự khóa lại sau ${Math.max(
+                                1,
+                                Math.ceil((adminExpiresAt - nowMs) / 60_000)
+                              )} phút)`
+                            : ''
+                        }.`
+                      : 'Mặc định thiết bị chỉ có quyền xem. Nhập mật khẩu Admin để mở khóa trong 1 tiếng.'}
                   </p>
                 </div>
 

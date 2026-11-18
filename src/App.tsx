@@ -3,15 +3,20 @@ import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BatchActionBar } from './components/BatchActionBar';
 import { CategoriesView } from './components/CategoriesView';
+import { FloatingOrdersCapsule } from './components/FloatingOrdersCapsule';
 import { GalleryGrid } from './components/GalleryGrid';
 import { ImageInspectorModal } from './components/ImageInspectorModal';
 import { OrderModal } from './components/OrderModal';
 import { OrdersView } from './components/OrdersView';
 import { SettingsModal } from './components/SettingsModal';
 import { DEFAULT_SIDEBAR_STEP, Sidebar } from './components/Sidebar';
-import { SmartSearchBar, type SearchSortOption } from './components/SmartSearchBar';
 import { TopBar } from './components/TopBar';
 import { UploadModal } from './components/UploadModal';
+import {
+  clearAdminSession,
+  getAdminExpiresAt,
+  grantAdminSession,
+} from './lib/adminAuth';
 import {
   clearAllVaultData as clearLocalIndexedDbData,
   type VaultBackupBundle,
@@ -41,10 +46,12 @@ import {
   updateServerOrder,
   uploadServerImage,
 } from './lib/serverVault';
+import { getLocalDateKey } from './lib/orderFilters';
 import { filterAndScoreImages } from './lib/smartSearch';
 import type {
   AppTab,
   Category,
+  OrderFilterMode,
   OrderRecord,
   SearchFilterState,
   StorageStats,
@@ -53,13 +60,6 @@ import type {
   ViewMode,
 } from './types/vault';
 
-const LIBRARY_SORT_OPTIONS: SearchSortOption[] = [
-  { value: 'relevance', label: 'Bộ lọc' },
-  { value: 'newest', label: 'Mới lưu nhất' },
-  { value: 'oldest', label: 'Cũ nhất' },
-  { value: 'title', label: 'Tên A–Z' },
-  { value: 'size', label: 'Dung lượng' },
-];
 
 type ViewTransitionState = {
   mode: 'zoom-in' | 'zoom-out' | 'fade';
@@ -86,10 +86,10 @@ const VIEW_TRANSITION_VARIANTS = {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>('library');
-  const [isAdmin, setIsAdmin] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    return localStorage.getItem('khoanh_admin_auth') === '1';
-  });
+  const [adminExpiresAt, setAdminExpiresAt] = useState<number | null>(() =>
+    getAdminExpiresAt()
+  );
+  const isAdmin = adminExpiresAt !== null;
 
   const [isLoading, setIsLoading] = useState(true);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -102,7 +102,9 @@ export default function App() {
   const [dismissedSyncBanner, setDismissedSyncBanner] = useState(false);
   const [isSyncingLocal, setIsSyncingLocal] = useState(false);
 
-  const [viewMode, setViewMode] = useState<ViewMode>('grid');
+  const [viewMode] = useState<ViewMode>('grid');
+  const [orderFilterMode, setOrderFilterMode] = useState<OrderFilterMode>('unreceived');
+  const [orderFilterDate, setOrderFilterDate] = useState<string>(() => getLocalDateKey());
   const [filters, setFilters] = useState<SearchFilterState>({
     query: '',
     categoryId: 'all',
@@ -118,7 +120,7 @@ export default function App() {
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
   const [orderPresetImage, setOrderPresetImage] = useState<VaultImageView | null>(null);
   const [editingOrder, setEditingOrder] = useState<OrderRecord | null>(null);
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [openedOrdersFromInside, setOpenedOrdersFromInside] = useState(false);
   const [droppedFiles, setDroppedFiles] = useState<File[]>([]);
   const [isDraggingGlobal, setIsDraggingGlobal] = useState(false);
   const mobileEdgeTouchStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -126,6 +128,56 @@ export default function App() {
   const [inspectedImageId, setInspectedImageId] = useState<string | null>(null);
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  const logoutAdmin = useCallback(() => {
+    clearAdminSession();
+    setAdminExpiresAt(null);
+    setIsUploadOpen(false);
+    setIsBatchMode(false);
+    setSelectedIds([]);
+    setDroppedFiles([]);
+  }, []);
+
+  useEffect(() => {
+    if (adminExpiresAt === null) return;
+
+    const remainingMs = adminExpiresAt - Date.now();
+    if (remainingMs <= 0) {
+      logoutAdmin();
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      logoutAdmin();
+    }, remainingMs);
+
+    const checkExpiration = () => {
+      const validUntil = getAdminExpiresAt();
+      if (validUntil === null || Date.now() >= validUntil) {
+        logoutAdmin();
+      }
+    };
+
+    const handleStorage = () => {
+      const validUntil = getAdminExpiresAt();
+      if (validUntil === null) {
+        logoutAdmin();
+      } else {
+        setAdminExpiresAt(validUntil);
+      }
+    };
+
+    window.addEventListener('focus', checkExpiration);
+    document.addEventListener('visibilitychange', checkExpiration);
+    window.addEventListener('storage', handleStorage);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      window.removeEventListener('focus', checkExpiration);
+      document.removeEventListener('visibilitychange', checkExpiration);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, [adminExpiresAt, logoutAdmin]);
 
   const mainRef = useRef<HTMLElement>(null);
   const lastCategoryOriginRef = useRef<{ originX: string; originY: string }>({
@@ -161,14 +213,51 @@ export default function App() {
     }
   }, [activeTab, filters.categoryId]);
 
+  useEffect(() => {
+    if (activeTab !== 'orders') {
+      setOpenedOrdersFromInside(false);
+    }
+  }, [activeTab]);
+
   const isViewingSpecificCategory =
     activeTab === 'library' &&
     filters.categoryId !== 'all' &&
     filters.categoryId !== 'uncategorized';
 
-  const canGoBack = isViewingSpecificCategory;
+  const isViewingOrdersFromInside =
+    activeTab === 'orders' && openedOrdersFromInside;
+
+  const canGoBack = isViewingSpecificCategory || isViewingOrdersFromInside;
+
+  const handleOpenOrdersFromInside = useCallback(() => {
+    setOpenedOrdersFromInside(true);
+    setViewTransition({ mode: 'fade', originX: '50%', originY: '50%' });
+    setActiveTab('orders');
+  }, []);
 
   const handleGoBack = useCallback(() => {
+    if (isViewingOrdersFromInside) {
+      setOpenedOrdersFromInside(false);
+      setViewTransition({
+        mode: 'fade',
+        originX: '50%',
+        originY: '50%',
+      });
+
+      if (navHistory.length > 0) {
+        const target = navHistory[navHistory.length - 1];
+        isGoingBackRef.current = true;
+        setNavHistory((hist) => hist.slice(0, -1));
+        setActiveTab(target.tab);
+        setFilters((prev) => ({ ...prev, categoryId: target.categoryId }));
+        return;
+      }
+
+      isGoingBackRef.current = true;
+      setActiveTab('library');
+      return;
+    }
+
     if (!isViewingSpecificCategory) return;
 
     const origin = lastCategoryOriginRef.current;
@@ -189,7 +278,7 @@ export default function App() {
 
     isGoingBackRef.current = true;
     setActiveTab('categories');
-  }, [isViewingSpecificCategory, navHistory]);
+  }, [isViewingOrdersFromInside, isViewingSpecificCategory, navHistory]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -565,7 +654,6 @@ export default function App() {
         }}
         onBack={handleGoBack}
         canGoBack={canGoBack}
-        isMobileSidebarOpen={isMobileSidebarOpen}
         onToggleMobileSidebar={() => setIsMobileSidebarOpen((v) => !v)}
         isDesktopSidebarCollapsed={isDesktopSidebarCollapsed}
         onToggleDesktopSidebar={() => setIsDesktopSidebarCollapsed((v) => !v)}
@@ -574,6 +662,12 @@ export default function App() {
           setEditingOrder(null);
           setIsOrderModalOpen(true);
         }}
+        isOrdersView={activeTab === 'orders'}
+        orders={orders}
+        orderFilterMode={orderFilterMode}
+        orderFilterDate={orderFilterDate}
+        onChangeOrderFilterMode={setOrderFilterMode}
+        onChangeOrderFilterDate={setOrderFilterDate}
       />
 
       <div
@@ -605,12 +699,13 @@ export default function App() {
         <Sidebar
           activeTab={activeTab}
           onSelectTab={(tab) => {
+            setOpenedOrdersFromInside(false);
             setViewTransition({ mode: 'fade', originX: '50%', originY: '50%' });
             setActiveTab(tab);
           }}
           categories={categories}
           totalCount={images.length}
-          ordersCount={orders.length}
+          ordersCount={orders.filter((o) => !o.isReceived).length}
           categoryCounts={categoryCounts}
           selectedCategoryId={filters.categoryId}
           onSelectCategory={(id) => {
@@ -739,46 +834,27 @@ export default function App() {
                       )}
                     </div>
 
-                    {/* Bottom-Right Search / Add Capsule */}
-                    <SmartSearchBar
-                      isOpen={isSearchOpen}
-                      onOpen={() => setIsSearchOpen(true)}
-                      onClose={() => setIsSearchOpen(false)}
-                      query={filters.query}
-                      onQueryChange={(q) => setFilters((prev) => ({ ...prev, query: q }))}
-                      placeholder="Tìm từ khóa, cat:danh mục, ratio:ngang (hỗ trợ không dấu)..."
-                      ariaLabel="Tìm kiếm thông minh theo từ khóa"
-                      viewMode={viewMode}
-                      onViewModeChange={setViewMode}
-                      sortValue={filters.sortBy}
-                      sortOptions={LIBRARY_SORT_OPTIONS}
-                      onSortChange={(sortBy) =>
-                        setFilters((prev) => ({ ...prev, sortBy: sortBy as SearchFilterState['sortBy'] }))
-                      }
-                      categories={categories}
-                      enableSmartHints
-                      isBatchMode={isBatchMode}
-                      onToggleBatchMode={() => {
-                        if (!isAdmin) return;
-                        setIsBatchMode((v) => !v);
-                        setSelectedIds([]);
-                      }}
+                    {/* Bottom-Right Orders (when sidebar/mục lục is closed) & Add Circle */}
+                    <FloatingOrdersCapsule
+                      showOrdersMobile={!isMobileSidebarOpen}
+                      showOrdersDesktop={isDesktopSidebarCollapsed}
+                      onOpenOrders={handleOpenOrdersFromInside}
+                      canAdd={isAdmin}
                       onAddClick={() => {
-                        if (!isAdmin) return;
                         setDroppedFiles([]);
                         setIsUploadOpen(true);
                       }}
                       addTitle="Thêm ảnh mẫu"
-                      canAdd={isAdmin}
-                      canBatch={isAdmin}
-                      disableShortcuts={Boolean(
-                        isUploadOpen || isSettingsOpen || isOrderModalOpen || inspectedImageId
-                      )}
+                      addAriaLabel="Thêm ảnh mẫu"
                     />
                   </>
                 ) : activeTab === 'orders' ? (
                   <OrdersView
                     orders={orders}
+                    filterMode={orderFilterMode}
+                    filterDate={orderFilterDate}
+                    onChangeFilterMode={setOrderFilterMode}
+                    onChangeFilterDate={setOrderFilterDate}
                     onOpenCreateOrder={() => {
                       setOrderPresetImage(null);
                       setEditingOrder(null);
@@ -798,6 +874,7 @@ export default function App() {
                     onMarkOrderReceived={async (order) => {
                       await updateServerOrder(order.id, {
                         isReceived: true,
+                        isPaid: true,
                       });
                       await reloadVault();
                     }}
@@ -811,11 +888,10 @@ export default function App() {
                     <CategoriesView
                       categories={categories}
                       images={images}
-                      isSearchOpen={isSearchOpen}
-                      onOpenSearch={() => setIsSearchOpen(true)}
-                      onCloseSearch={() => setIsSearchOpen(false)}
-                      disableShortcuts={Boolean(isUploadOpen || isSettingsOpen || isOrderModalOpen)}
                       canManage={isAdmin}
+                      showOrdersMobile={!isMobileSidebarOpen}
+                      showOrdersDesktop={isDesktopSidebarCollapsed}
+                      onOpenOrders={handleOpenOrdersFromInside}
                       onCreateCategory={handleFullCreateCategory}
                       onUpdateCategory={async (cat) => {
                         if (!isAdmin) return;
@@ -826,16 +902,6 @@ export default function App() {
                         if (!isAdmin) return;
                         await deleteServerCategory(id);
                         if (filters.categoryId === id) {
-                          setFilters((prev) => ({ ...prev, categoryId: 'all' }));
-                        }
-                        await reloadVault();
-                      }}
-                      onDeleteCategories={async (ids) => {
-                        if (!isAdmin) return;
-                        for (const id of ids) {
-                          await deleteServerCategory(id);
-                        }
-                        if (ids.includes(filters.categoryId)) {
                           setFilters((prev) => ({ ...prev, categoryId: 'all' }));
                         }
                         await reloadVault();
@@ -873,22 +939,15 @@ export default function App() {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         isAdmin={isAdmin}
+        adminExpiresAt={adminExpiresAt}
         onAuthenticateAdmin={(password) => {
           if (password.trim() === '123456') {
-            localStorage.setItem('khoanh_admin_auth', '1');
-            setIsAdmin(true);
+            setAdminExpiresAt(grantAdminSession());
             return true;
           }
           return false;
         }}
-        onLogoutAdmin={() => {
-          localStorage.removeItem('khoanh_admin_auth');
-          setIsAdmin(false);
-          setIsUploadOpen(false);
-          setIsBatchMode(false);
-          setSelectedIds([]);
-          setDroppedFiles([]);
-        }}
+        onLogoutAdmin={logoutAdmin}
         stats={stats}
         onExportBackup={handleExportBackup}
         onImportBackup={handleImportBackup}
@@ -974,6 +1033,10 @@ export default function App() {
           await reloadVault();
         }}
         onCreatedSuccess={() => {
+          if (orderFilterMode === 'received') {
+            setOrderFilterMode('unreceived');
+          }
+          setOpenedOrdersFromInside(false);
           setViewTransition({ mode: 'fade', originX: '50%', originY: '50%' });
           setActiveTab('orders');
         }}
