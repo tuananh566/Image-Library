@@ -1,6 +1,5 @@
 import { Check, Heart, ImageIcon, Upload } from 'lucide-react';
 import { useState } from 'react';
-import { GRID_COLS_CLASS, MASONRY_COLS_CLASS } from '../hooks/usePinchZoom';
 import { formatFileSize } from '../lib/imageProcessor';
 import type { Category, ScoredImage, ViewMode } from '../types/vault';
 
@@ -8,7 +7,7 @@ interface GalleryGridProps {
   items: ScoredImage[];
   categories: Category[];
   viewMode: ViewMode;
-  columns?: number;
+  isSidebarCollapsed?: boolean;
   isBatchMode: boolean;
   selectedIds: string[];
   onToggleSelect: (id: string) => void;
@@ -55,7 +54,7 @@ export function GalleryGrid({
   items,
   categories,
   viewMode,
-  columns,
+  isSidebarCollapsed = false,
   isBatchMode,
   selectedIds,
   onToggleSelect,
@@ -157,7 +156,10 @@ export function GalleryGrid({
                     )}
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-3">
-                        <div className="h-11 w-14 shrink-0 overflow-hidden rounded-md border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900">
+                        <div
+                          data-image-card={image.id}
+                          className="h-11 w-14 shrink-0 overflow-hidden rounded-md border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900"
+                        >
                           <ResilientThumbnail
                             src={image.thumbnailUrl}
                             alt={image.title}
@@ -216,20 +218,19 @@ export function GalleryGrid({
   }
 
   const isMasonry = viewMode === 'masonry';
-  const isDense = (columns ?? 4) >= 5;
-  const gridColsClass = columns
-    ? GRID_COLS_CLASS[columns] || 'grid-cols-4'
-    : 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4';
-  const masonryColsClass = columns
-    ? MASONRY_COLS_CLASS[columns] || 'columns-4'
-    : 'columns-1 sm:columns-2 md:columns-3 xl:columns-4';
+  const gridColsClass = isSidebarCollapsed
+    ? 'grid-cols-2 md:portrait:grid-cols-4 md:landscape:grid-cols-6'
+    : 'grid-cols-2 md:portrait:grid-cols-3 md:landscape:grid-cols-5';
+  const masonryColsClass = isSidebarCollapsed
+    ? 'columns-2 md:portrait:columns-4 md:landscape:columns-6'
+    : 'columns-2 md:portrait:columns-3 md:landscape:columns-5';
 
   return (
     <div
       className={
         isMasonry
-          ? `${masonryColsClass} ${isDense ? 'gap-3' : 'gap-5'}`
-          : `grid ${gridColsClass} ${isDense ? 'gap-3' : 'gap-5'}`
+          ? `${masonryColsClass} gap-3 md:portrait:gap-4 md:landscape:gap-3`
+          : `grid ${gridColsClass} gap-3 md:portrait:gap-4 md:landscape:gap-3`
       }
     >
       {items.map(({ image }) => {
@@ -238,8 +239,9 @@ export function GalleryGrid({
         return (
           <article
             key={image.id}
-            className={`group relative overflow-hidden rounded-xl border bg-white transition-colors duration-150 dark:bg-zinc-950 ${
-              isMasonry ? `${isDense ? 'mb-3' : 'mb-5'} break-inside-avoid` : 'flex flex-col'
+            data-image-card={image.id}
+            className={`group relative overflow-hidden rounded-xl border bg-white transition-[transform,border-color,box-shadow] duration-150 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.97] dark:bg-zinc-950 ${
+              isMasonry ? 'mb-3 break-inside-avoid md:portrait:mb-4 md:landscape:mb-3' : 'flex flex-col'
             } ${
               isSelected
                 ? 'border-blue-600 ring-2 ring-blue-600/20 dark:border-blue-500'

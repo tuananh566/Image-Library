@@ -31,11 +31,11 @@ export function TopBar({
     backVisibilityClass = 'inline-flex';
     dividerVisibilityClass = 'block';
   } else if (showBackMobile && !showBackDesktop) {
-    backVisibilityClass = 'inline-flex lg:hidden';
-    dividerVisibilityClass = 'block lg:hidden';
+    backVisibilityClass = 'inline-flex md:hidden';
+    dividerVisibilityClass = 'block md:hidden';
   } else if (!showBackMobile && showBackDesktop) {
-    backVisibilityClass = 'hidden lg:inline-flex';
-    dividerVisibilityClass = 'hidden lg:block';
+    backVisibilityClass = 'hidden md:inline-flex';
+    dividerVisibilityClass = 'hidden md:block';
   }
 
   return (
@@ -48,7 +48,7 @@ export function TopBar({
               type="button"
               onClick={onToggleMobileSidebar}
               aria-label="Mở thanh danh mục"
-              className="inline-flex h-7 w-8 items-center justify-center rounded-full text-zinc-700 transition-colors hover:bg-white hover:text-zinc-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 lg:hidden dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-50"
+              className="inline-flex h-7 w-8 items-center justify-center rounded-full text-zinc-700 transition-colors hover:bg-white hover:text-zinc-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 md:hidden dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-50"
             >
               <Menu className="h-4 w-4" />
             </button>
@@ -60,7 +60,7 @@ export function TopBar({
               onClick={onToggleDesktopSidebar}
               title={isDesktopSidebarCollapsed ? 'Mở thanh mục lục' : 'Thu gọn thanh mục lục'}
               aria-label={isDesktopSidebarCollapsed ? 'Mở thanh mục lục' : 'Thu gọn thanh mục lục'}
-              className="hidden h-7 w-8 items-center justify-center rounded-full text-zinc-700 transition-colors hover:bg-white hover:text-zinc-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 lg:inline-flex dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-50"
+              className="hidden h-7 w-8 items-center justify-center rounded-full text-zinc-700 transition-colors hover:bg-white hover:text-zinc-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 md:inline-flex dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-50"
             >
               <Menu className="h-4 w-4" />
             </button>

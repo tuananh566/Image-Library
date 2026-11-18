@@ -1,5 +1,5 @@
 import { Download, HardDrive, RotateCcw, ShieldCheck, Trash2, Upload } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { formatFileSize } from '../lib/imageProcessor';
 import type { StorageStats } from '../types/vault';
 
@@ -12,6 +12,11 @@ interface BackupViewProps {
   }>;
   onRestoreSampleVault: () => Promise<void>;
   onClearAllData: () => Promise<void>;
+  pendingLocalSync?: { categories: number; images: number };
+  onSyncLocalToServer?: () => Promise<{
+    syncedCategories: number;
+    syncedImages: number;
+  }>;
   embedded?: boolean;
 }
 
@@ -21,6 +26,8 @@ export function BackupView({
   onImportBackup,
   onRestoreSampleVault,
   onClearAllData,
+  pendingLocalSync,
+  onSyncLocalToServer,
   embedded = false,
 }: BackupViewProps) {
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -28,20 +35,22 @@ export function BackupView({
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
-  const [quotaInfo, setQuotaInfo] = useState<{ usage: number; quota: number } | null>(null);
 
-  useEffect(() => {
-    if (navigator.storage && navigator.storage.estimate) {
-      navigator.storage
-        .estimate()
-        .then((est) => {
-          if (est.usage !== undefined && est.quota !== undefined) {
-            setQuotaInfo({ usage: est.usage, quota: est.quota });
-          }
-        })
-        .catch(() => {});
+  const handleSyncLocal = async () => {
+    if (!onSyncLocalToServer) return;
+    setIsBusy(true);
+    setStatusMessage(null);
+    try {
+      const res = await onSyncLocalToServer();
+      setStatusMessage(
+        `Đã đồng bộ ${res.syncedImages} ảnh và ${res.syncedCategories} danh mục từ trình duyệt này lên server.`
+      );
+    } catch {
+      setStatusMessage('Có lỗi khi đồng bộ dữ liệu cục bộ lên server.');
+    } finally {
+      setIsBusy(false);
     }
-  }, [stats]);
+  };
 
   const handleExport = async () => {
     setIsBusy(true);
@@ -107,10 +116,10 @@ export function BackupView({
               : 'font-display text-2xl font-bold tracking-tight text-zinc-950 dark:text-zinc-50'
           }
         >
-          Lưu trữ cục bộ & Sao lưu
+          Lưu trữ Server & Sao lưu
         </h2>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Toàn bộ ảnh gốc, danh mục và ghi chú được lưu trữ trực tiếp trong IndexedDB của trình duyệt này. Không gửi dữ liệu ra nền tảng ngoài.
+          Toàn bộ ảnh gốc, danh mục và ghi chú được lưu trực tiếp trên server của bạn để mọi thiết bị truy cập cùng đồng bộ theo thời gian thực.
         </p>
       </div>
 
@@ -119,6 +128,30 @@ export function BackupView({
           {statusMessage}
         </div>
       )}
+
+      {onSyncLocalToServer &&
+        pendingLocalSync &&
+        (pendingLocalSync.images > 0 || pendingLocalSync.categories > 0) && (
+          <div className="flex flex-col gap-3 rounded-xl border border-blue-200 bg-blue-50/80 p-4 sm:flex-row sm:items-center sm:justify-between dark:border-blue-900 dark:bg-blue-950/40">
+            <div>
+              <p className="text-sm font-semibold text-blue-950 dark:text-blue-100">
+                Có dữ liệu cũ lưu trong trình duyệt này chưa lên server
+              </p>
+              <p className="mt-0.5 text-xs text-blue-800 dark:text-blue-300">
+                Phát hiện {pendingLocalSync.images} ảnh và {pendingLocalSync.categories} danh mục cục bộ trên thiết bị này.
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={handleSyncLocal}
+              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-blue-600 px-3.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              <Upload className="h-3.5 w-3.5" />
+              <span>Đồng bộ lên server</span>
+            </button>
+          </div>
+        )}
 
       {/* Storage Metrics Row */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -142,24 +175,22 @@ export function BackupView({
             {formatFileSize(stats.totalBytes)}
           </p>
           <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-            Lưu ngoại tuyến trên thiết bị
+            Lưu tập trung trên server
           </p>
         </div>
 
         <div className="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
           <div className="flex items-center justify-between">
             <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
-              Hạn mức trình duyệt
+              Phạm vi truy cập
             </p>
             <HardDrive className="h-4 w-4 text-zinc-400" />
           </div>
-          <p className="mt-2 font-display text-2xl font-bold tabular-nums text-zinc-950 dark:text-zinc-50">
-            {quotaInfo ? formatFileSize(quotaInfo.usage) : formatFileSize(stats.totalBytes)}
+          <p className="mt-2 font-display text-xl font-bold text-zinc-950 dark:text-zinc-50">
+            Đa thiết bị
           </p>
-          <p className="mt-1 text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
-            {quotaInfo
-              ? `Khả dụng tối đa ~${formatFileSize(quotaInfo.quota)}`
-              : 'IndexedDB cục bộ'}
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+            Mọi thiết bị truy cập web đều đồng bộ
           </p>
         </div>
       </div>
@@ -253,10 +284,10 @@ export function BackupView({
       <section className="flex flex-col gap-4 rounded-xl border border-zinc-200 bg-white p-5 sm:flex-row sm:items-center sm:justify-between dark:border-zinc-800 dark:bg-zinc-950">
         <div>
           <h2 className="font-display text-sm font-semibold text-zinc-950 dark:text-zinc-100">
-            Tác vụ bảo trì dữ liệu cục bộ
+            Tác vụ bảo trì dữ liệu server
           </h2>
           <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-            Nạp lại bộ ảnh mẫu tham khảo ban đầu hoặc dọn trống hoàn toàn IndexedDB.
+            Nạp lại bộ ảnh mẫu tham khảo ban đầu hoặc dọn trống hoàn toàn thư viện trên server.
           </p>
         </div>
 

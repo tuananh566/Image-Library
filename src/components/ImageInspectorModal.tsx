@@ -10,7 +10,7 @@ import {
   X,
 } from 'lucide-react';
 import { AnimatePresence, MotionConfig, motion } from 'motion/react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getImageById } from '../lib/db';
 import { formatFileSize } from '../lib/imageProcessor';
 import type { Category, VaultImageView } from '../types/vault';
@@ -41,7 +41,53 @@ interface ImageInspectorModalProps {
 const MIN_SCALE = 1;
 const MAX_SCALE = 4;
 
-export function ImageInspectorModal({
+function getCardZoomOffset(imageId: string): { x: number; y: number; scale: number } {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return { x: 0, y: 0, scale: 0.72 };
+  }
+  const selectorId = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(imageId) : imageId;
+  const el = document.querySelector(`[data-image-card="${selectorId}"]`);
+  if (!el) return { x: 0, y: 0, scale: 0.72 };
+  const rect = el.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) {
+    return { x: 0, y: 0, scale: 0.72 };
+  }
+  if (rect.bottom < 0 || rect.top > window.innerHeight) {
+    return { x: 0, y: 0, scale: 0.72 };
+  }
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const cardCenterX = rect.left + rect.width / 2;
+  const cardCenterY = rect.top + rect.height / 2;
+  const stageCenterX = vw / 2;
+  const stageCenterY = Math.max(120, (vh - 130) / 2);
+  const targetWidth = Math.min(vw * 0.82, 680);
+  const scale = Math.max(0.2, Math.min(0.68, rect.width / targetWidth));
+
+  return {
+    x: cardCenterX - stageCenterX,
+    y: cardCenterY - stageCenterY,
+    scale,
+  };
+}
+
+export function ImageInspectorModal(props: ImageInspectorModalProps) {
+  return (
+    <MotionConfig reducedMotion="user">
+      <AnimatePresence>
+        {props.image && (
+          <ImageInspectorContent
+            key="image-inspector"
+            {...props}
+            image={props.image}
+          />
+        )}
+      </AnimatePresence>
+    </MotionConfig>
+  );
+}
+
+function ImageInspectorContent({
   image,
   images,
   categories,
@@ -54,7 +100,7 @@ export function ImageInspectorModal({
   onUpdate,
   onDelete,
   onCreateCategory,
-}: ImageInspectorModalProps) {
+}: ImageInspectorModalProps & { image: VaultImageView }) {
   const [fullUrl, setFullUrl] = useState<string>('');
   const [title, setTitle] = useState('');
   const [notes, setNotes] = useState('');
@@ -72,6 +118,7 @@ export function ImageInspectorModal({
   const activeThumbRef = useRef<HTMLButtonElement | null>(null);
   const drawerTouchStartXRef = useRef<number | null>(null);
   const lastTapRef = useRef<number>(0);
+  const suppressBackdropClickRef = useRef<boolean>(false);
 
   const onPrevRef = useRef(onPrev);
   onPrevRef.current = onPrev;
@@ -83,6 +130,7 @@ export function ImageInspectorModal({
   hasNextRef.current = hasNext;
 
   const transformRef = useRef({ scale: 1, x: 0, y: 0 });
+  const zoomOrigin = useMemo(() => getCardZoomOffset(image.id), [image.id]);
 
   const clampPan = useCallback((x: number, y: number, scale: number) => {
     if (scale <= 1) return { x: 0, y: 0 };
@@ -138,7 +186,24 @@ export function ImageInspectorModal({
     setConfirmDelete(false);
     setSaveFeedback(false);
     setShowNewCat(false);
-    resetZoom(false);
+    transformRef.current = { scale: 1, x: 0, y: 0 };
+    setIsZoomedIn(false);
+    const el = imgRef.current;
+    if (el) {
+      el.style.transition = 'none';
+      el.style.opacity = '0.65';
+      el.style.transform = 'translate3d(0px, 0px, 0) scale(0.985)';
+      requestAnimationFrame(() => {
+        applyTransform(1, 0, 0, true);
+      });
+    }
+
+    if (image.fullUrl) {
+      setFullUrl(image.fullUrl);
+      return () => {
+        setFullUrl('');
+      };
+    }
 
     let activeUrl = '';
     let cancelled = false;
@@ -153,7 +218,7 @@ export function ImageInspectorModal({
       if (activeUrl) URL.revokeObjectURL(activeUrl);
       setFullUrl('');
     };
-  }, [image?.id, resetZoom]);
+  }, [image?.id, image?.fullUrl, resetZoom]);
 
   useEffect(() => {
     if (!image?.id) return;
@@ -249,6 +314,7 @@ export function ImageInspectorModal({
 
     const handleTouchStart = (e: TouchEvent) => {
       if (e.touches.length === 2) {
+        suppressBackdropClickRef.current = true;
         isTouchPanning = false;
         isSwiping = false;
         swipeAxisLocked = null;
@@ -263,6 +329,7 @@ export function ImageInspectorModal({
         pinchMidStartX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
         pinchMidStartY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
       } else if (e.touches.length === 1) {
+        suppressBackdropClickRef.current = false;
         if (transformRef.current.scale > 1.02) {
           isTouchPanning = true;
           isSwiping = false;
@@ -284,6 +351,7 @@ export function ImageInspectorModal({
     const handleTouchMove = (e: TouchEvent) => {
       if (e.touches.length === 2 && pinchStartDist > 0) {
         e.preventDefault();
+        suppressBackdropClickRef.current = true;
         const currentDist = getDist(e.touches[0], e.touches[1]);
         const nextScale = Math.max(
           MIN_SCALE,
@@ -298,6 +366,9 @@ export function ImageInspectorModal({
         e.preventDefault();
         const dx = e.touches[0].clientX - panStartTouchX;
         const dy = e.touches[0].clientY - panStartTouchY;
+        if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
+          suppressBackdropClickRef.current = true;
+        }
         applyTransform(
           transformRef.current.scale,
           panOriginX + dx,
@@ -314,6 +385,7 @@ export function ImageInspectorModal({
 
         if (swipeAxisLocked === 'x') {
           e.preventDefault();
+          suppressBackdropClickRef.current = true;
           swipeCurrentDx = dx;
           applySwipePreview(dx);
         }
@@ -342,6 +414,11 @@ export function ImageInspectorModal({
           } else if (Math.abs(dx) > 4) {
             resetZoom(true);
           }
+        }
+        if (suppressBackdropClickRef.current) {
+          window.setTimeout(() => {
+            suppressBackdropClickRef.current = false;
+          }, 120);
         }
       }
     };
@@ -404,8 +481,6 @@ export function ImageInspectorModal({
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
   }, [image, confirmDelete, hasPrev, hasNext, onClose, onPrev, onNext, applyTransform, resetZoom]);
-
-  if (!image) return null;
 
   const toggleDoubleTapZoom = (clientX: number, clientY: number) => {
     const { scale } = transformRef.current;
@@ -509,9 +584,16 @@ export function ImageInspectorModal({
   };
 
   const handleDownload = async () => {
-    const rec = await getImageById(image.id);
-    if (!rec) return;
-    const url = URL.createObjectURL(rec.blob);
+    let blob: Blob | null = null;
+    if (image.fullUrl) {
+      const res = await fetch(image.fullUrl);
+      if (res.ok) blob = await res.blob();
+    } else {
+      const rec = await getImageById(image.id);
+      if (rec) blob = rec.blob;
+    }
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = image.fileName || `${image.title}.jpg`;
@@ -528,15 +610,23 @@ export function ImageInspectorModal({
   }).format(new Date(image.createdAt));
 
   return (
-    <MotionConfig reducedMotion="user">
-      <div
-        className="fixed inset-0 z-50 flex overflow-hidden bg-zinc-950/90 backdrop-blur-sm"
-        role="dialog"
-        aria-modal="true"
-        aria-label={`Chi tiết ảnh ${image.title}`}
-      >
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+      className="fixed inset-0 z-50 flex overflow-hidden bg-zinc-950/90 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Chi tiết ảnh ${image.title}`}
+    >
         {/* Unobstructed Image Viewport */}
         <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !suppressBackdropClickRef.current) {
+              onClose();
+            }
+          }}
           className={`relative flex flex-1 items-center justify-center overflow-hidden p-4 pb-36 transition-[margin] duration-250 ease-[cubic-bezier(0.16,1,0.3,1)] sm:p-8 sm:pb-40 ${
             showInfo ? 'lg:mr-[380px]' : ''
           }`}
@@ -573,8 +663,27 @@ export function ImageInspectorModal({
           )}
 
           {/* Interactive Zoomable & Pannable Stage */}
-          <div
+          <motion.div
             ref={stageRef}
+            initial={{
+              opacity: 0,
+              x: zoomOrigin.x,
+              y: zoomOrigin.y,
+              scale: zoomOrigin.scale,
+            }}
+            animate={{ opacity: 1, x: 0, y: 0, scale: 1 }}
+            exit={{
+              opacity: 0,
+              x: zoomOrigin.x,
+              y: zoomOrigin.y,
+              scale: zoomOrigin.scale,
+            }}
+            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+            onClick={(e) => {
+              if (e.target === e.currentTarget && !suppressBackdropClickRef.current) {
+                onClose();
+              }
+            }}
             className="flex h-full w-full touch-none items-center justify-center overflow-hidden"
           >
             <img
@@ -605,10 +714,16 @@ export function ImageInspectorModal({
                   : 'cursor-zoom-in'
               }`}
             />
-          </div>
+          </motion.div>
 
           {/* Bottom Dock: Filmstrip Thumbnails + Action Capsule */}
-          <div className="absolute bottom-5 left-1/2 z-20 flex w-max max-w-[calc(100%-2rem)] -translate-x-1/2 flex-col items-center gap-2.5">
+          <motion.div
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 10 }}
+            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+            className="absolute bottom-5 left-1/2 z-20 flex w-max max-w-[calc(100%-2rem)] -translate-x-1/2 flex-col items-center gap-2.5"
+          >
             {images.length > 0 && (
               <div
                 aria-label="Danh sách ảnh thu nhỏ"
@@ -730,7 +845,7 @@ export function ImageInspectorModal({
                 </button>
               </div>
             )}
-          </div>
+          </motion.div>
         </div>
 
         {/* Horizontal Slide-in Metadata Drawer */}
@@ -933,7 +1048,6 @@ export function ImageInspectorModal({
             </motion.aside>
           )}
         </AnimatePresence>
-      </div>
-    </MotionConfig>
+      </motion.div>
   );
 }

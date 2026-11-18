@@ -1,4 +1,5 @@
-import { Upload } from 'lucide-react';
+import { Smartphone, Upload } from 'lucide-react';
+import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BatchActionBar } from './components/BatchActionBar';
 import { CategoriesView } from './components/CategoriesView';
@@ -9,23 +10,26 @@ import { DEFAULT_SIDEBAR_STEP, Sidebar } from './components/Sidebar';
 import { SmartSearchBar, type SearchSortOption } from './components/SmartSearchBar';
 import { TopBar } from './components/TopBar';
 import { UploadModal } from './components/UploadModal';
-import { usePinchZoom } from './hooks/usePinchZoom';
 import {
-  batchUpdateImages,
-  clearAllVaultData,
-  deleteCategoryAndReassign,
-  deleteImagesByIds,
-  exportVaultBackup,
-  getAllCategories,
-  getAllImages,
-  importVaultBackup,
-  saveCategory,
-  saveImageRecord,
-  seedSampleVault,
-  updateImageMetadata,
+  clearAllVaultData as clearLocalIndexedDbData,
   type VaultBackupBundle,
 } from './lib/db';
 import { processImageBlob } from './lib/imageProcessor';
+import {
+  batchUpdateServerImages,
+  clearServerVault,
+  deleteServerCategory,
+  deleteServerImages,
+  exportServerBackup,
+  fetchServerVault,
+  getPendingLocalSyncCount,
+  importServerBackup,
+  saveServerCategory,
+  seedServerSampleVault,
+  syncLocalIndexedDbToServer,
+  updateServerImageMetadata,
+  uploadServerImage,
+} from './lib/serverVault';
 import { filterAndScoreImages } from './lib/smartSearch';
 import type {
   AppTab,
@@ -45,6 +49,29 @@ const LIBRARY_SORT_OPTIONS: SearchSortOption[] = [
   { value: 'size', label: 'Dung lượng' },
 ];
 
+type ViewTransitionState = {
+  mode: 'zoom-in' | 'zoom-out' | 'fade';
+  originX: string;
+  originY: string;
+};
+
+const VIEW_TRANSITION_VARIANTS = {
+  initial: (vt: ViewTransitionState) => {
+    if (vt.mode === 'zoom-in') return { opacity: 0, scale: 0.78 };
+    if (vt.mode === 'zoom-out') return { opacity: 0, scale: 1.12 };
+    return { opacity: 0, scale: 1 };
+  },
+  animate: {
+    opacity: 1,
+    scale: 1,
+  },
+  exit: (vt: ViewTransitionState) => {
+    if (vt.mode === 'zoom-in') return { opacity: 0, scale: 1.12 };
+    if (vt.mode === 'zoom-out') return { opacity: 0, scale: 0.78 };
+    return { opacity: 0, scale: 1 };
+  },
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>('library');
   const [isDark, setIsDark] = useState<boolean>(() => {
@@ -55,11 +82,14 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [categories, setCategories] = useState<Category[]>([]);
   const [images, setImages] = useState<VaultImageView[]>([]);
-  const objectUrlsRef = useRef<string[]>([]);
+  const [pendingLocalSync, setPendingLocalSync] = useState<{
+    categories: number;
+    images: number;
+  }>({ categories: 0, images: 0 });
+  const [dismissedSyncBanner, setDismissedSyncBanner] = useState(false);
+  const [isSyncingLocal, setIsSyncingLocal] = useState(false);
 
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
-  const [zoomOffset, setZoomOffset] = useState<number>(0);
-  const galleryScrollRef = useRef<HTMLDivElement>(null);
   const [filters, setFilters] = useState<SearchFilterState>({
     query: '',
     categoryId: 'all',
@@ -80,6 +110,17 @@ export default function App() {
   const [inspectedImageId, setInspectedImageId] = useState<string | null>(null);
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  const mainRef = useRef<HTMLElement>(null);
+  const lastCategoryOriginRef = useRef<{ originX: string; originY: string }>({
+    originX: '50%',
+    originY: '45%',
+  });
+  const [viewTransition, setViewTransition] = useState<ViewTransitionState>({
+    mode: 'fade',
+    originX: '50%',
+    originY: '50%',
+  });
 
   const [navHistory, setNavHistory] = useState<
     Array<{ tab: AppTab; categoryId: SearchFilterState['categoryId'] }>
@@ -115,6 +156,13 @@ export default function App() {
   const handleGoBack = useCallback(() => {
     if (!isViewingSpecificCategory) return;
 
+    const origin = lastCategoryOriginRef.current;
+    setViewTransition({
+      mode: 'zoom-out',
+      originX: origin.originX,
+      originY: origin.originY,
+    });
+
     if (navHistory.length > 0) {
       const target = navHistory[navHistory.length - 1];
       isGoingBackRef.current = true;
@@ -128,12 +176,17 @@ export default function App() {
     setActiveTab('categories');
   }, [isViewingSpecificCategory, navHistory]);
 
-  const { cols: galleryCols } = usePinchZoom({
-    containerRef: galleryScrollRef,
-    zoomOffset,
-    onZoomOffsetChange: setZoomOffset,
-    enabled: activeTab === 'library' && viewMode !== 'list',
-  });
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const isCoarsePointer = window.matchMedia?.('(pointer: coarse)').matches;
+    const isPhoneSize = Math.min(window.innerWidth, window.innerHeight) < 600;
+    if (isCoarsePointer && isPhoneSize) {
+      const orientation = screen.orientation as
+        | (ScreenOrientation & { lock?: (orientation: string) => Promise<void> })
+        | undefined;
+      orientation?.lock?.('portrait')?.catch(() => {});
+    }
+  }, []);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -147,27 +200,21 @@ export default function App() {
   }, [isDark]);
 
   const reloadVault = useCallback(async () => {
-    const [cats, recs] = await Promise.all([getAllCategories(), getAllImages()]);
-    objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
-    const nextUrls: string[] = [];
-
-    const viewItems: VaultImageView[] = recs.map((rec) => {
-      const { blob: _b, thumbnailBlob, ...rest } = rec;
-      const thumbnailUrl = URL.createObjectURL(thumbnailBlob || rec.blob);
-      nextUrls.push(thumbnailUrl);
-      return { ...rest, thumbnailUrl };
-    });
-
-    objectUrlsRef.current = nextUrls;
-    setCategories(cats);
-    setImages(viewItems);
+    const vault = await fetchServerVault();
+    setCategories(vault.categories);
+    setImages(vault.images);
+    const pending = await getPendingLocalSyncCount(
+      new Set(vault.categories.map((c) => c.id)),
+      new Set(vault.images.map((i) => i.id))
+    );
+    setPendingLocalSync(pending);
   }, []);
 
   useEffect(() => {
     let active = true;
     (async () => {
       try {
-        await seedSampleVault(false);
+        await seedServerSampleVault(false);
         if (active) await reloadVault();
       } finally {
         if (active) setIsLoading(false);
@@ -176,7 +223,35 @@ export default function App() {
 
     return () => {
       active = false;
-      objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [reloadVault]);
+
+  // Live cross-device sync via Server-Sent Events + window focus refresh
+  useEffect(() => {
+    const eventSource = new EventSource('/api/events');
+    eventSource.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data) as { type?: string };
+        if (msg.type === 'vault-updated') {
+          void reloadVault();
+        }
+      } catch {
+        // Ignore malformed SSE message
+      }
+    };
+
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        void reloadVault();
+      }
+    };
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+
+    return () => {
+      eventSource.close();
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
     };
   }, [reloadVault]);
 
@@ -261,7 +336,7 @@ export default function App() {
       order: categories.length,
       createdAt: Date.now(),
     };
-    await saveCategory(newCat);
+    await saveServerCategory(newCat);
     await reloadVault();
     return newCat;
   };
@@ -279,7 +354,7 @@ export default function App() {
       order: categories.length,
       createdAt: Date.now(),
     };
-    await saveCategory(newCat);
+    await saveServerCategory(newCat);
     await reloadVault();
   };
 
@@ -315,14 +390,14 @@ export default function App() {
         blob: item.file,
         thumbnailBlob: processed.thumbnailBlob,
       };
-      await saveImageRecord(record);
+      await uploadServerImage(record);
     }
     setDroppedFiles([]);
     await reloadVault();
   };
 
   const handleToggleFavorite = async (id: string, next: boolean) => {
-    await updateImageMetadata(id, { isFavorite: next });
+    await updateServerImageMetadata(id, { isFavorite: next });
     setImages((prev) =>
       prev.map((img) => (img.id === id ? { ...img, isFavorite: next } : img))
     );
@@ -337,32 +412,20 @@ export default function App() {
       isFavorite: boolean;
     }>
   ) => {
-    const updated = await updateImageMetadata(id, patch);
-    if (!updated) return;
+    const updated = await updateServerImageMetadata(id, patch);
     setImages((prev) =>
-      prev.map((img) =>
-        img.id === id
-          ? {
-              ...img,
-              title: updated.title,
-              notes: updated.notes,
-              categoryId: updated.categoryId,
-              isFavorite: updated.isFavorite,
-              updatedAt: updated.updatedAt,
-            }
-          : img
-      )
+      prev.map((img) => (img.id === id ? updated : img))
     );
   };
 
   const handleDeleteImage = async (id: string) => {
-    await deleteImagesByIds([id]);
+    await deleteServerImages([id]);
     setInspectedImageId(null);
     await reloadVault();
   };
 
   const handleExportBackup = async () => {
-    const bundle = await exportVaultBackup();
+    const bundle = await exportServerBackup();
     const json = JSON.stringify(bundle, null, 2);
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -382,9 +445,24 @@ export default function App() {
     if (!parsed || !Array.isArray(parsed.images)) {
       throw new Error('Invalid backup format');
     }
-    const res = await importVaultBackup(parsed, mode);
+    const res = await importServerBackup(parsed, mode);
     await reloadVault();
     return res;
+  };
+
+  const handleSyncLocalToServer = async () => {
+    setIsSyncingLocal(true);
+    try {
+      const res = await syncLocalIndexedDbToServer(
+        new Set(categories.map((c) => c.id)),
+        new Set(images.map((i) => i.id))
+      );
+      await clearLocalIndexedDbData();
+      await reloadVault();
+      return res;
+    } finally {
+      setIsSyncingLocal(false);
+    }
   };
 
   const inspectedIndex = useMemo(
@@ -434,13 +512,28 @@ export default function App() {
         }
       }}
     >
+      {/* Mobile Portrait-Only Overlay (phones rotated to landscape) */}
+      <div className="fixed inset-0 z-[100] hidden flex-col items-center justify-center gap-4 bg-zinc-950 px-6 text-center text-zinc-100 [@media(orientation:landscape)_and_(max-height:520px)_and_(pointer:coarse)]:flex">
+        <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/15 bg-white/10">
+          <Smartphone className="h-7 w-7" />
+        </div>
+        <div className="max-w-xs space-y-1.5">
+          <p className="font-display text-base font-semibold">
+            Vui lòng xoay dọc điện thoại
+          </p>
+          <p className="text-sm text-zinc-400">
+            Phiên bản điện thoại chỉ hỗ trợ chế độ dọc để hiển thị lưới 2 cột tối ưu.
+          </p>
+        </div>
+      </div>
+
       {/* Global Drag Overlay */}
       {isDraggingGlobal && (
         <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-blue-600/15 backdrop-blur-xs">
           <div className="flex flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-blue-600 bg-white px-10 py-8 shadow-xl dark:bg-zinc-900">
             <Upload className="h-9 w-9 text-blue-600" />
             <p className="font-display text-base font-semibold text-zinc-950 dark:text-zinc-50">
-              Thả ảnh vào đây để lưu vào kho cục bộ
+              Thả ảnh vào đây để tải lên server
             </p>
           </div>
         </div>
@@ -448,7 +541,19 @@ export default function App() {
 
       <TopBar
         title={headerTitle}
-        onSelectTab={setActiveTab}
+        onSelectTab={(tab) => {
+          if (tab === 'categories' && isViewingSpecificCategory) {
+            const origin = lastCategoryOriginRef.current;
+            setViewTransition({
+              mode: 'zoom-out',
+              originX: origin.originX,
+              originY: origin.originY,
+            });
+          } else {
+            setViewTransition({ mode: 'fade', originX: '50%', originY: '50%' });
+          }
+          setActiveTab(tab);
+        }}
         onBack={handleGoBack}
         canGoBack={canGoBack}
         isMobileSidebarOpen={isMobileSidebarOpen}
@@ -485,15 +590,19 @@ export default function App() {
       >
         <Sidebar
           activeTab={activeTab}
-          onSelectTab={setActiveTab}
+          onSelectTab={(tab) => {
+            setViewTransition({ mode: 'fade', originX: '50%', originY: '50%' });
+            setActiveTab(tab);
+          }}
           categories={categories}
           totalCount={images.length}
           favoriteCount={favoriteCount}
           categoryCounts={categoryCounts}
           selectedCategoryId={filters.categoryId}
-          onSelectCategory={(id) =>
-            setFilters((prev) => ({ ...prev, categoryId: id }))
-          }
+          onSelectCategory={(id) => {
+            setViewTransition({ mode: 'fade', originX: '50%', originY: '50%' });
+            setFilters((prev) => ({ ...prev, categoryId: id }));
+          }}
           onCreateCategory={async (name) => {
             await handleQuickCreateCategory(name);
           }}
@@ -506,146 +615,204 @@ export default function App() {
           onWidthStepChange={setSidebarWidthStep}
         />
 
-        <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          {activeTab === 'library' ? (
-            <>
-              <div
-                ref={galleryScrollRef}
-                className="min-h-0 flex-1 overflow-y-auto touch-pan-y p-4 pb-28 sm:p-6 sm:pb-28"
-              >
-                {isBatchMode && (
-                  <BatchActionBar
-                    selectedCount={selectedIds.length}
-                    categories={categories}
-                    onSelectAll={() =>
-                      setSelectedIds(scoredItems.map((s) => s.image.id))
-                    }
-                    onClearSelection={() => setSelectedIds([])}
-                    onAssignCategory={async (catId) => {
-                      await batchUpdateImages(selectedIds, (img) => ({
-                        ...img,
-                        categoryId: catId,
-                      }));
-                      setSelectedIds([]);
-                      await reloadVault();
-                    }}
-                    onDeleteSelected={async () => {
-                      await deleteImagesByIds(selectedIds);
-                      setSelectedIds([]);
-                      setIsBatchMode(false);
-                      await reloadVault();
-                    }}
-                  />
-                )}
-
-                {isLoading ? (
-                  <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
-                    {[0, 1, 2, 3].map((n) => (
-                      <div
-                        key={n}
-                        className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950"
-                      >
-                        <div className="aspect-[4/3] animate-pulse bg-zinc-200 dark:bg-zinc-800" />
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <GalleryGrid
-                    items={scoredItems}
-                    categories={categories}
-                    viewMode={viewMode}
-                    columns={galleryCols}
-                    isBatchMode={isBatchMode}
-                    selectedIds={selectedIds}
-                    onToggleSelect={(id) =>
-                      setSelectedIds((prev) =>
-                        prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-                      )
-                    }
-                    onOpenImage={(id) => setInspectedImageId(id)}
-                    onToggleFavorite={handleToggleFavorite}
-                    onOpenUpload={() => {
-                      setDroppedFiles([]);
-                      setIsUploadOpen(true);
-                    }}
-                    hasActiveFilters={hasActiveFilters}
-                    onClearFilters={clearAllFilters}
-                  />
-                )}
+        <main ref={mainRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          {!dismissedSyncBanner &&
+            (pendingLocalSync.images > 0 || pendingLocalSync.categories > 0) && (
+              <div className="mx-4 mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50/90 px-4 py-2.5 text-xs sm:mx-6 dark:border-blue-900 dark:bg-blue-950/50">
+                <span className="font-medium text-blue-900 dark:text-blue-100">
+                  Phát hiện {pendingLocalSync.images} ảnh và {pendingLocalSync.categories} danh mục cũ trên trình duyệt này chưa được đồng bộ lên server.
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={isSyncingLocal}
+                    onClick={handleSyncLocalToServer}
+                    className="rounded-lg bg-blue-600 px-3 py-1.5 font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {isSyncingLocal ? 'Đang đồng bộ...' : 'Đồng bộ lên server'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDismissedSyncBanner(true)}
+                    className="rounded-lg px-2 py-1.5 font-medium text-blue-700 hover:bg-blue-100 dark:text-blue-300 dark:hover:bg-blue-900/50"
+                  >
+                    Ẩn
+                  </button>
+                </div>
               </div>
+            )}
+          <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+            <MotionConfig reducedMotion="user">
+              <AnimatePresence mode="popLayout" initial={false} custom={viewTransition}>
+                <motion.div
+                  key={`${activeTab}:${filters.categoryId}`}
+                  custom={viewTransition}
+                  variants={VIEW_TRANSITION_VARIANTS}
+                  initial="initial"
+                  animate="animate"
+                  exit="exit"
+                  transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+                  style={{
+                    transformOrigin: `${viewTransition.originX} ${viewTransition.originY}`,
+                  }}
+                  className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-zinc-50 dark:bg-zinc-950"
+                >
+                {activeTab === 'library' ? (
+                  <>
+                    <div className="min-h-0 flex-1 overflow-y-auto touch-pan-y p-4 pb-28 sm:p-6 sm:pb-28">
+                      {isBatchMode && (
+                        <BatchActionBar
+                          selectedCount={selectedIds.length}
+                          categories={categories}
+                          onSelectAll={() =>
+                            setSelectedIds(scoredItems.map((s) => s.image.id))
+                          }
+                          onClearSelection={() => setSelectedIds([])}
+                          onAssignCategory={async (catId) => {
+                            await batchUpdateServerImages(selectedIds, { categoryId: catId });
+                            setSelectedIds([]);
+                            await reloadVault();
+                          }}
+                          onDeleteSelected={async () => {
+                            await deleteServerImages(selectedIds);
+                            setSelectedIds([]);
+                            setIsBatchMode(false);
+                            await reloadVault();
+                          }}
+                        />
+                      )}
 
-              {/* Bottom-Left Search Button / Bottom Frosted Search Bar */}
-              <SmartSearchBar
-                isOpen={isSearchOpen}
-                onOpen={() => setIsSearchOpen(true)}
-                onClose={() => setIsSearchOpen(false)}
-                query={filters.query}
-                onQueryChange={(q) => setFilters((prev) => ({ ...prev, query: q }))}
-                placeholder="Tìm từ khóa, cat:danh mục, ratio:ngang (hỗ trợ không dấu)..."
-                ariaLabel="Tìm kiếm thông minh theo từ khóa"
-                viewMode={viewMode}
-                onViewModeChange={setViewMode}
-                sortValue={filters.sortBy}
-                sortOptions={LIBRARY_SORT_OPTIONS}
-                onSortChange={(sortBy) =>
-                  setFilters((prev) => ({ ...prev, sortBy: sortBy as SearchFilterState['sortBy'] }))
-                }
-                categories={categories}
-                enableSmartHints
-                isBatchMode={isBatchMode}
-                onToggleBatchMode={() => {
-                  setIsBatchMode((v) => !v);
-                  setSelectedIds([]);
-                }}
-                onAddClick={() => {
-                  setDroppedFiles([]);
-                  setIsUploadOpen(true);
-                }}
-                addTitle="Thêm ảnh mẫu"
-                disableShortcuts={Boolean(
-                  isUploadOpen || isSettingsOpen || inspectedImageId
+                      {isLoading ? (
+                        <div
+                          className={`grid gap-3 md:portrait:gap-4 md:landscape:gap-3 ${
+                            isDesktopSidebarCollapsed
+                              ? 'grid-cols-2 md:portrait:grid-cols-4 md:landscape:grid-cols-6'
+                              : 'grid-cols-2 md:portrait:grid-cols-3 md:landscape:grid-cols-5'
+                          }`}
+                        >
+                          {[0, 1, 2, 3, 4, 5].map((n) => (
+                            <div
+                              key={n}
+                              className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950"
+                            >
+                              <div className="aspect-[4/3] animate-pulse bg-zinc-200 dark:bg-zinc-800" />
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <GalleryGrid
+                          items={scoredItems}
+                          categories={categories}
+                          viewMode={viewMode}
+                          isSidebarCollapsed={isDesktopSidebarCollapsed}
+                          isBatchMode={isBatchMode}
+                          selectedIds={selectedIds}
+                          onToggleSelect={(id) =>
+                            setSelectedIds((prev) =>
+                              prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+                            )
+                          }
+                          onOpenImage={(id) => setInspectedImageId(id)}
+                          onToggleFavorite={handleToggleFavorite}
+                          onOpenUpload={() => {
+                            setDroppedFiles([]);
+                            setIsUploadOpen(true);
+                          }}
+                          hasActiveFilters={hasActiveFilters}
+                          onClearFilters={clearAllFilters}
+                        />
+                      )}
+                    </div>
+
+                    {/* Bottom-Left Search Button / Bottom Frosted Search Bar */}
+                    <SmartSearchBar
+                      isOpen={isSearchOpen}
+                      onOpen={() => setIsSearchOpen(true)}
+                      onClose={() => setIsSearchOpen(false)}
+                      query={filters.query}
+                      onQueryChange={(q) => setFilters((prev) => ({ ...prev, query: q }))}
+                      placeholder="Tìm từ khóa, cat:danh mục, ratio:ngang (hỗ trợ không dấu)..."
+                      ariaLabel="Tìm kiếm thông minh theo từ khóa"
+                      viewMode={viewMode}
+                      onViewModeChange={setViewMode}
+                      sortValue={filters.sortBy}
+                      sortOptions={LIBRARY_SORT_OPTIONS}
+                      onSortChange={(sortBy) =>
+                        setFilters((prev) => ({ ...prev, sortBy: sortBy as SearchFilterState['sortBy'] }))
+                      }
+                      categories={categories}
+                      enableSmartHints
+                      isBatchMode={isBatchMode}
+                      onToggleBatchMode={() => {
+                        setIsBatchMode((v) => !v);
+                        setSelectedIds([]);
+                      }}
+                      onAddClick={() => {
+                        setDroppedFiles([]);
+                        setIsUploadOpen(true);
+                      }}
+                      addTitle="Thêm ảnh mẫu"
+                      disableShortcuts={Boolean(
+                        isUploadOpen || isSettingsOpen || inspectedImageId
+                      )}
+                    />
+                  </>
+                ) : (
+                  <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                    <CategoriesView
+                      categories={categories}
+                      images={images}
+                      isSearchOpen={isSearchOpen}
+                      onOpenSearch={() => setIsSearchOpen(true)}
+                      onCloseSearch={() => setIsSearchOpen(false)}
+                      disableShortcuts={Boolean(isUploadOpen || isSettingsOpen)}
+                      onCreateCategory={handleFullCreateCategory}
+                      onUpdateCategory={async (cat) => {
+                        await saveServerCategory(cat);
+                        await reloadVault();
+                      }}
+                      onDeleteCategory={async (id) => {
+                        await deleteServerCategory(id);
+                        if (filters.categoryId === id) {
+                          setFilters((prev) => ({ ...prev, categoryId: 'all' }));
+                        }
+                        await reloadVault();
+                      }}
+                      onDeleteCategories={async (ids) => {
+                        for (const id of ids) {
+                          await deleteServerCategory(id);
+                        }
+                        if (ids.includes(filters.categoryId)) {
+                          setFilters((prev) => ({ ...prev, categoryId: 'all' }));
+                        }
+                        await reloadVault();
+                      }}
+                      onOpenCategoryInLibrary={(catId, sourceRect) => {
+                        let originX = '50%';
+                        let originY = '45%';
+                        if (sourceRect && mainRef.current) {
+                          const mainRect = mainRef.current.getBoundingClientRect();
+                          if (mainRect.width > 0 && mainRect.height > 0) {
+                            const cx = sourceRect.left + sourceRect.width / 2 - mainRect.left;
+                            const cy = sourceRect.top + sourceRect.height / 2 - mainRect.top;
+                            const px = Math.max(8, Math.min(92, (cx / mainRect.width) * 100));
+                            const py = Math.max(8, Math.min(92, (cy / mainRect.height) * 100));
+                            originX = `${px.toFixed(1)}%`;
+                            originY = `${py.toFixed(1)}%`;
+                          }
+                        }
+                        lastCategoryOriginRef.current = { originX, originY };
+                        setViewTransition({ mode: 'zoom-in', originX, originY });
+                        setFilters((prev) => ({ ...prev, categoryId: catId }));
+                        setActiveTab('library');
+                      }}
+                    />
+                  </div>
                 )}
-              />
-            </>
-          ) : (
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-              <CategoriesView
-                categories={categories}
-                images={images}
-                zoomOffset={zoomOffset}
-                onZoomOffsetChange={setZoomOffset}
-                isSearchOpen={isSearchOpen}
-                onOpenSearch={() => setIsSearchOpen(true)}
-                onCloseSearch={() => setIsSearchOpen(false)}
-                disableShortcuts={Boolean(isUploadOpen || isSettingsOpen)}
-                onCreateCategory={handleFullCreateCategory}
-                onUpdateCategory={async (cat) => {
-                  await saveCategory(cat);
-                  await reloadVault();
-                }}
-                onDeleteCategory={async (id) => {
-                  await deleteCategoryAndReassign(id);
-                  if (filters.categoryId === id) {
-                    setFilters((prev) => ({ ...prev, categoryId: 'all' }));
-                  }
-                  await reloadVault();
-                }}
-                onDeleteCategories={async (ids) => {
-                  for (const id of ids) {
-                    await deleteCategoryAndReassign(id);
-                  }
-                  if (ids.includes(filters.categoryId)) {
-                    setFilters((prev) => ({ ...prev, categoryId: 'all' }));
-                  }
-                  await reloadVault();
-                }}
-                onOpenCategoryInLibrary={(catId) => {
-                  setFilters((prev) => ({ ...prev, categoryId: catId }));
-                  setActiveTab('library');
-                }}
-              />
-            </div>
-          )}
+                </motion.div>
+              </AnimatePresence>
+            </MotionConfig>
+          </div>
         </main>
       </div>
 
@@ -658,14 +825,16 @@ export default function App() {
         onExportBackup={handleExportBackup}
         onImportBackup={handleImportBackup}
         onRestoreSampleVault={async () => {
-          await seedSampleVault(true);
+          await seedServerSampleVault(true);
           await reloadVault();
         }}
         onClearAllData={async () => {
-          await clearAllVaultData();
+          await clearServerVault();
           clearAllFilters();
           await reloadVault();
         }}
+        pendingLocalSync={pendingLocalSync}
+        onSyncLocalToServer={handleSyncLocalToServer}
       />
 
       <UploadModal

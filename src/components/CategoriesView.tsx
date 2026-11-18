@@ -5,12 +5,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  GRID_COLS_CLASS,
-  MASONRY_COLS_CLASS,
-  usePinchZoom,
-} from '../hooks/usePinchZoom';
+import { useEffect, useMemo, useState } from 'react';
 import { normalizeVietnamese } from '../lib/smartSearch';
 import type { Category, VaultImageView, ViewMode } from '../types/vault';
 import { SmartSearchBar, type SearchSortOption } from './SmartSearchBar';
@@ -28,8 +23,6 @@ const CATEGORY_SORT_OPTIONS: SearchSortOption[] = [
 interface CategoriesViewProps {
   categories: Category[];
   images: VaultImageView[];
-  zoomOffset: number;
-  onZoomOffsetChange: (nextOffset: number) => void;
   isSearchOpen: boolean;
   onOpenSearch: () => void;
   onCloseSearch: () => void;
@@ -42,7 +35,7 @@ interface CategoriesViewProps {
   onUpdateCategory: (category: Category) => Promise<void>;
   onDeleteCategory: (id: string) => Promise<void>;
   onDeleteCategories?: (ids: string[]) => Promise<void>;
-  onOpenCategoryInLibrary: (categoryId: string) => void;
+  onOpenCategoryInLibrary: (categoryId: string, sourceRect?: DOMRect) => void;
 }
 
 const PRESET_COLORS = [
@@ -66,8 +59,6 @@ function getRandomPresetColor(exclude?: string): string {
 export function CategoriesView({
   categories,
   images,
-  zoomOffset,
-  onZoomOffsetChange,
   isSearchOpen,
   onOpenSearch,
   onCloseSearch,
@@ -78,21 +69,12 @@ export function CategoriesView({
   onDeleteCategories,
   onOpenCategoryInLibrary,
 }: CategoriesViewProps) {
-  const categoriesScrollRef = useRef<HTMLDivElement>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<CategorySortOption>('relevance');
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [confirmBatchDelete, setConfirmBatchDelete] = useState(false);
-
-  const { cols } = usePinchZoom({
-    containerRef: categoriesScrollRef,
-    zoomOffset,
-    onZoomOffsetChange,
-    enabled: viewMode !== 'list',
-  });
-  const isDense = cols >= 5;
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [name, setName] = useState('');
@@ -238,14 +220,13 @@ export function CategoriesView({
   };
 
   const isMasonry = viewMode === 'masonry';
+  const gridColsClass = 'grid-cols-2 md:portrait:grid-cols-2 md:landscape:grid-cols-3';
+  const masonryColsClass = 'columns-2 md:portrait:columns-2 md:landscape:columns-3';
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
       {/* Scrollable Category Area */}
-      <div
-        ref={categoriesScrollRef}
-        className="min-h-0 flex-1 overflow-y-auto touch-pan-y p-4 pb-28 sm:p-6 sm:pb-28"
-      >
+      <div className="min-h-0 flex-1 overflow-y-auto touch-pan-y p-4 pb-28 sm:p-6 sm:pb-28">
         {/* Batch Selection Bar */}
         {isBatchMode && (
           selectedIds.length === 0 ? (
@@ -342,8 +323,11 @@ export function CategoriesView({
                     return (
                       <tr
                         key={cat.id}
-                        onClick={() =>
-                          isBatchMode ? toggleSelect(cat.id) : onOpenCategoryInLibrary(cat.id)
+                        data-category-card={cat.id}
+                        onClick={(e) =>
+                          isBatchMode
+                            ? toggleSelect(cat.id)
+                            : onOpenCategoryInLibrary(cat.id, e.currentTarget.getBoundingClientRect())
                         }
                         className={`cursor-pointer transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/60 ${
                           isSelected ? 'bg-blue-50/60 dark:bg-blue-950/30' : ''
@@ -414,8 +398,8 @@ export function CategoriesView({
           <div
             className={
               isMasonry
-                ? `${MASONRY_COLS_CLASS[cols] || 'columns-4'} ${isDense ? 'gap-3' : 'gap-5'}`
-                : `grid ${GRID_COLS_CLASS[cols] || 'grid-cols-4'} ${isDense ? 'gap-3' : 'gap-5'}`
+                ? `${masonryColsClass} gap-3.5 sm:gap-5`
+                : `grid ${gridColsClass} gap-3.5 sm:gap-5`
             }
           >
             {filteredCategories.map((cat) => {
@@ -427,20 +411,25 @@ export function CategoriesView({
               return (
                 <article
                   key={cat.id}
+                  data-category-card={cat.id}
                   role="button"
                   tabIndex={0}
-                  onClick={() =>
-                    isBatchMode ? toggleSelect(cat.id) : onOpenCategoryInLibrary(cat.id)
+                  onClick={(e) =>
+                    isBatchMode
+                      ? toggleSelect(cat.id)
+                      : onOpenCategoryInLibrary(cat.id, e.currentTarget.getBoundingClientRect())
                   }
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
                       if (isBatchMode) toggleSelect(cat.id);
-                      else onOpenCategoryInLibrary(cat.id);
+                      else onOpenCategoryInLibrary(cat.id, e.currentTarget.getBoundingClientRect());
                     }
                   }}
-                  className={`group relative w-full cursor-pointer overflow-hidden rounded-xl border bg-zinc-100 transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-blue-600 dark:bg-zinc-900 ${
-                    isMasonry ? `${isDense ? 'mb-3' : 'mb-5'} break-inside-avoid` : 'aspect-[4/3]'
+                  className={`group relative w-full cursor-pointer overflow-hidden rounded-xl border bg-zinc-100 transition-[transform,border-color,box-shadow] duration-150 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-blue-600 dark:bg-zinc-900 ${
+                    isMasonry
+                      ? 'mb-3.5 break-inside-avoid sm:mb-5'
+                      : 'aspect-[4/3]'
                   } ${
                     isMasonry && previewImages.length !== 1 ? 'aspect-[4/3]' : ''
                   } ${
@@ -540,12 +529,8 @@ export function CategoriesView({
                   )}
 
                   {/* Frosted Category Name Overlay inside image */}
-                  <div className={`pointer-events-none absolute inset-x-0 bottom-0 ${isDense ? 'p-1.5' : 'p-2.5'}`}>
-                    <span
-                      className={`inline-block max-w-full truncate rounded-lg bg-black/45 font-display font-semibold text-white backdrop-blur-xs ${
-                        isDense ? 'px-2 py-0.5 text-xs' : 'px-2.5 py-1 text-sm'
-                      }`}
-                    >
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 p-2 sm:p-2.5">
+                    <span className="inline-block max-w-full truncate rounded-lg bg-black/45 px-2 py-0.5 font-display text-xs font-semibold text-white backdrop-blur-xs sm:px-2.5 sm:py-1 sm:text-sm">
                       {cat.name}
                     </span>
                   </div>
@@ -559,11 +544,9 @@ export function CategoriesView({
                     }}
                     aria-label={`Chỉnh sửa ${cat.name}`}
                     title={`Chỉnh sửa ${cat.name}`}
-                    className={`absolute inline-flex items-center justify-center rounded-lg bg-black/45 text-white backdrop-blur-xs transition-colors hover:bg-black/65 ${
-                      isDense ? 'right-1.5 top-1.5 h-7 w-7' : 'right-2.5 top-2.5 h-8 w-8'
-                    }`}
+                    className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-lg bg-black/45 text-white backdrop-blur-xs transition-colors hover:bg-black/65 sm:right-2.5 sm:top-2.5 sm:h-8 sm:w-8"
                   >
-                    <Pencil className={isDense ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
+                    <Pencil className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                   </button>
                 </article>
               );

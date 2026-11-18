@@ -19,6 +19,11 @@ interface SettingsModalProps {
   }>;
   onRestoreSampleVault: () => Promise<void>;
   onClearAllData: () => Promise<void>;
+  pendingLocalSync?: { categories: number; images: number };
+  onSyncLocalToServer?: () => Promise<{
+    syncedCategories: number;
+    syncedImages: number;
+  }>;
 }
 
 export function SettingsModal({
@@ -31,6 +36,8 @@ export function SettingsModal({
   onImportBackup,
   onRestoreSampleVault,
   onClearAllData,
+  pendingLocalSync,
+  onSyncLocalToServer,
 }: SettingsModalProps) {
   useEffect(() => {
     if (!isOpen) return;
@@ -132,6 +139,8 @@ export function SettingsModal({
               onImportBackup={onImportBackup}
               onRestoreSampleVault={onRestoreSampleVault}
               onClearAllData={onClearAllData}
+              pendingLocalSync={pendingLocalSync}
+              onSyncLocalToServer={onSyncLocalToServer}
             />
           </div>
         </div>
