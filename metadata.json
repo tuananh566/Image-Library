@@ -1,0 +1,6 @@
+{
+  "name": "KhoẢnh — Thư viện ảnh mẫu cục bộ",
+  "description": "Ứng dụng web lưu trữ ảnh mẫu cục bộ trên trình duyệt với phân loại danh mục tùy biến và tìm kiếm thông minh theo từ khóa hoặc thẻ tag.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
