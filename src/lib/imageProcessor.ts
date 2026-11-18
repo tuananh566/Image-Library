@@ -155,10 +155,48 @@ function loadImageElement(blob: Blob): Promise<HTMLImageElement> {
   });
 }
 
+async function decodeDrawableImage(
+  blob: Blob
+): Promise<{ source: CanvasImageSource; width: number; height: number; close?: () => void } | null> {
+  try {
+    const img = await loadImageElement(blob);
+    return {
+      source: img,
+      width: img.naturalWidth || 800,
+      height: img.naturalHeight || 600,
+    };
+  } catch {
+    if (typeof createImageBitmap === 'function') {
+      try {
+        const bitmap = await createImageBitmap(blob);
+        return {
+          source: bitmap,
+          width: bitmap.width || 800,
+          height: bitmap.height || 600,
+          close: () => bitmap.close(),
+        };
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+}
+
 export async function processImageBlob(blob: Blob): Promise<ProcessedImageResult> {
-  const img = await loadImageElement(blob);
-  const width = img.naturalWidth || 800;
-  const height = img.naturalHeight || 600;
+  const decoded = await decodeDrawableImage(blob);
+  if (!decoded) {
+    return {
+      width: 1200,
+      height: 1200,
+      aspectRatioType: 'square',
+      thumbnailBlob: blob,
+      dominantColors: [],
+      colorFamilies: [],
+    };
+  }
+
+  const { source, width, height, close } = decoded;
 
   const ratio = width / height;
   let aspectRatioType: AspectRatioType = 'square';
@@ -184,15 +222,19 @@ export async function processImageBlob(blob: Blob): Promise<ProcessedImageResult
   thumbCanvas.height = thumbH;
   const thumbCtx = thumbCanvas.getContext('2d');
   if (thumbCtx) {
-    thumbCtx.drawImage(img, 0, 0, thumbW, thumbH);
+    thumbCtx.drawImage(source, 0, 0, thumbW, thumbH);
   }
 
   const thumbnailBlob = await new Promise<Blob>((resolve) => {
-    thumbCanvas.toBlob(
-      (result) => resolve(result || blob),
-      'image/jpeg',
-      0.86
-    );
+    try {
+      thumbCanvas.toBlob(
+        (result) => resolve(result || blob),
+        'image/jpeg',
+        0.86
+      );
+    } catch {
+      resolve(blob);
+    }
   });
 
   // Extract palette on tiny 48x48 canvas
@@ -204,11 +246,17 @@ export async function processImageBlob(blob: Blob): Promise<ProcessedImageResult
   let colorFamilies: string[] = [];
 
   if (sampleCtx) {
-    sampleCtx.drawImage(img, 0, 0, 48, 48);
-    const palette = extractPalette(sampleCtx, 48, 48);
-    dominantColors = palette.dominantColors;
-    colorFamilies = palette.colorFamilies;
+    try {
+      sampleCtx.drawImage(source, 0, 0, 48, 48);
+      const palette = extractPalette(sampleCtx, 48, 48);
+      dominantColors = palette.dominantColors;
+      colorFamilies = palette.colorFamilies;
+    } catch {
+      // Ignore tainted/unsupported canvas readback
+    }
   }
+
+  close?.();
 
   return {
     width,
@@ -218,6 +266,52 @@ export async function processImageBlob(blob: Blob): Promise<ProcessedImageResult
     dominantColors,
     colorFamilies,
   };
+}
+
+export function generateId(): string {
+  if (typeof crypto !== 'undefined') {
+    if (typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    if (typeof crypto.getRandomValues === 'function') {
+      const bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+      return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    }
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+const IMAGE_EXT_REGEX = /\.(jpe?g|png|webp|gif|svg|avif|bmp|heic|heif|jfif|tiff?)$/i;
+
+export function isImageFile(file: File): boolean {
+  if (file.type && file.type.startsWith('image/')) return true;
+  return IMAGE_EXT_REGEX.test(file.name || '');
+}
+
+const EXT_TO_MIME: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  jfif: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  svg: 'image/svg+xml',
+  avif: 'image/avif',
+  bmp: 'image/bmp',
+  heic: 'image/heic',
+  heif: 'image/heif',
+  tif: 'image/tiff',
+  tiff: 'image/tiff',
+};
+
+export function inferImageMimeType(file: File): string {
+  if (file.type && file.type.startsWith('image/')) return file.type;
+  const ext = (file.name || '').split('.').pop()?.toLowerCase() || '';
+  return EXT_TO_MIME[ext] || 'image/jpeg';
 }
 
 export function formatFileSize(bytes: number): string {

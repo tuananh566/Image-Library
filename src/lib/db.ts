@@ -1,5 +1,5 @@
 import type { Category, VaultImageRecord } from '../types/vault';
-import { processImageBlob } from './imageProcessor';
+import { generateId, processImageBlob } from './imageProcessor';
 
 const DB_NAME = 'KhoAnhLocalVault';
 const DB_VERSION = 1;
@@ -253,7 +253,7 @@ export async function importVaultBackup(
     const blob = await base64ToBlob(item.dataUrl);
     const processed = await processImageBlob(blob);
     const record: VaultImageRecord = {
-      id: item.id || crypto.randomUUID(),
+      id: item.id || generateId(),
       title: item.title || 'Ảnh mẫu đã khôi phục',
       fileName: item.fileName || 'restored.jpg',
       notes: item.notes || '',

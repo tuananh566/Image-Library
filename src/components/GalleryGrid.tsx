@@ -1,4 +1,4 @@
-import { Check, Heart, ImageIcon, Upload } from 'lucide-react';
+import { Check, ImageIcon, Upload } from 'lucide-react';
 import { useState } from 'react';
 import { formatFileSize } from '../lib/imageProcessor';
 import type { Category, ScoredImage, ViewMode } from '../types/vault';
@@ -12,8 +12,8 @@ interface GalleryGridProps {
   selectedIds: string[];
   onToggleSelect: (id: string) => void;
   onOpenImage: (id: string) => void;
-  onToggleFavorite: (id: string, next: boolean) => void;
   onOpenUpload: () => void;
+  canUpload?: boolean;
   hasActiveFilters: boolean;
   onClearFilters: () => void;
 }
@@ -59,8 +59,8 @@ export function GalleryGrid({
   selectedIds,
   onToggleSelect,
   onOpenImage,
-  onToggleFavorite,
   onOpenUpload,
+  canUpload = true,
   hasActiveFilters,
   onClearFilters,
 }: GalleryGridProps) {
@@ -75,33 +75,37 @@ export function GalleryGrid({
         <h3 className="font-display text-base font-semibold text-zinc-900 dark:text-zinc-100">
           {hasActiveFilters
             ? 'Không có ảnh mẫu nào khớp bộ lọc'
-            : 'Thư viện ảnh cục bộ đang trống'}
+            : 'Thư viện ảnh mẫu đang trống'}
         </h3>
         <p className="mt-1.5 max-w-md text-sm text-zinc-500 dark:text-zinc-400">
           {hasActiveFilters
             ? 'Hãy thử đổi từ khóa tìm kiếm, nới lỏng thẻ tag hoặc xóa bộ lọc đang chọn.'
-            : 'Kéo thả tệp ảnh vào đây, dán ảnh từ clipboard (Ctrl+V) hoặc nhấn nút thêm ảnh để lưu trữ cục bộ.'}
+            : canUpload
+            ? 'Kéo thả tệp ảnh vào đây, dán ảnh từ clipboard (Ctrl+V) hoặc nhấn nút thêm ảnh để lưu lên server.'
+            : 'Chưa có ảnh mẫu nào trong thư viện. Vào Cài đặt để xác thực Admin nếu cần thêm ảnh.'}
         </p>
-        <div className="mt-5 flex items-center gap-3">
-          {hasActiveFilters ? (
-            <button
-              type="button"
-              onClick={onClearFilters}
-              className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-            >
-              Xóa toàn bộ bộ lọc
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={onOpenUpload}
-              className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-            >
-              <Upload className="h-4 w-4" />
-              <span>Thêm ảnh mẫu đầu tiên</span>
-            </button>
-          )}
-        </div>
+        {(hasActiveFilters || canUpload) && (
+          <div className="mt-5 flex items-center gap-3">
+            {hasActiveFilters ? (
+              <button
+                type="button"
+                onClick={onClearFilters}
+                className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              >
+                Xóa toàn bộ bộ lọc
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onOpenUpload}
+                className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                <Upload className="h-4 w-4" />
+                <span>Thêm ảnh mẫu đầu tiên</span>
+              </button>
+            )}
+          </div>
+        )}
       </div>
     );
   }
@@ -118,7 +122,6 @@ export function GalleryGrid({
                 <th className="px-4 py-2.5">Danh mục</th>
                 <th className="px-4 py-2.5 text-right">Kích thước</th>
                 <th className="px-4 py-2.5 text-right">Dung lượng</th>
-                <th className="w-14 px-4 py-2.5 text-right">Lưu</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
@@ -184,28 +187,6 @@ export function GalleryGrid({
                     </td>
                     <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums text-zinc-600 dark:text-zinc-400 whitespace-nowrap">
                       {formatFileSize(image.size)}
-                    </td>
-                    <td
-                      className="px-4 py-2.5 text-right"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => onToggleFavorite(image.id, !image.isFavorite)}
-                        aria-label={
-                          image.isFavorite ? 'Bỏ yêu thích' : 'Đánh dấu yêu thích'
-                        }
-                        className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
-                          image.isFavorite
-                            ? 'text-rose-600 dark:text-rose-400'
-                            : 'text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800'
-                        }`}
-                      >
-                        <Heart
-                          className="h-4 w-4"
-                          fill={image.isFavorite ? 'currentColor' : 'none'}
-                        />
-                      </button>
                     </td>
                   </tr>
                 );
@@ -290,25 +271,6 @@ export function GalleryGrid({
                   </span>
                 </div>
               )}
-
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggleFavorite(image.id, !image.isFavorite);
-                }}
-                aria-label={image.isFavorite ? 'Bỏ yêu thích' : 'Đánh dấu yêu thích'}
-                className={`absolute right-2.5 top-2.5 inline-flex h-8 w-8 items-center justify-center rounded-lg backdrop-blur-xs transition-opacity duration-150 ${
-                  image.isFavorite
-                    ? 'bg-white/90 text-rose-600 opacity-100 dark:bg-zinc-900/90 dark:text-rose-400'
-                    : 'bg-black/45 text-white opacity-0 hover:bg-black/65 group-hover:opacity-100'
-                }`}
-              >
-                <Heart
-                  className="h-4 w-4"
-                  fill={image.isFavorite ? 'currentColor' : 'none'}
-                />
-              </button>
             </div>
           </article>
         );

@@ -63,7 +63,6 @@ export interface ParsedQuery {
   excludedTerms: string[];
   categoryFilter: string | null;
   ratioFilter: 'landscape' | 'portrait' | 'square' | null;
-  favoriteOnly: boolean;
   terms: string[];
 }
 
@@ -72,7 +71,6 @@ export function parseSmartQuery(rawQuery: string): ParsedQuery {
     excludedTerms: [],
     categoryFilter: null,
     ratioFilter: null,
-    favoriteOnly: false,
     terms: [],
   };
 
@@ -89,8 +87,6 @@ export function parseSmartQuery(rawQuery: string): ParsedQuery {
       if (val === 'ngang' || val === 'landscape') result.ratioFilter = 'landscape';
       else if (val === 'doc' || val === 'portrait') result.ratioFilter = 'portrait';
       else if (val === 'vuong' || val === 'square') result.ratioFilter = 'square';
-    } else if (lower === 'fav:true' || lower === 'yeuthich') {
-      result.favoriteOnly = true;
     } else if (lower.startsWith('-') && lower.length > 1) {
       result.excludedTerms.push(lower.slice(1));
     } else {
@@ -115,11 +111,9 @@ export function filterAndScoreImages(
   const scored: ScoredImage[] = [];
 
   for (const img of images) {
-    if (filters.categoryId === 'favorites' && !img.isFavorite) continue;
     if (filters.categoryId === 'uncategorized' && img.categoryId !== null) continue;
     if (
       filters.categoryId !== 'all' &&
-      filters.categoryId !== 'favorites' &&
       filters.categoryId !== 'uncategorized' &&
       img.categoryId !== filters.categoryId
     ) {
@@ -130,7 +124,6 @@ export function filterAndScoreImages(
       continue;
     }
 
-    if (parsed.favoriteOnly && !img.isFavorite) continue;
     if (parsed.ratioFilter && img.aspectRatioType !== parsed.ratioFilter) continue;
 
     const categoryName = img.categoryId ? categoryMap.get(img.categoryId)?.name || '' : '';

@@ -3,9 +3,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
-  Heart,
   Info,
   Plus,
+  ShoppingBag,
   Trash2,
   X,
 } from 'lucide-react';
@@ -36,6 +36,8 @@ interface ImageInspectorModalProps {
   ) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onCreateCategory: (name: string) => Promise<Category>;
+  onCreateOrderFromImage?: (image: VaultImageView) => void;
+  canManage?: boolean;
 }
 
 const MIN_SCALE = 1;
@@ -100,6 +102,8 @@ function ImageInspectorContent({
   onUpdate,
   onDelete,
   onCreateCategory,
+  onCreateOrderFromImage,
+  canManage = true,
 }: ImageInspectorModalProps & { image: VaultImageView }) {
   const [fullUrl, setFullUrl] = useState<string>('');
   const [title, setTitle] = useState('');
@@ -766,7 +770,7 @@ function ImageInspectorContent({
               </div>
             )}
 
-            {confirmDelete ? (
+            {canManage && confirmDelete ? (
               <div className="inline-flex h-12 items-center gap-2 rounded-full border border-white/15 bg-zinc-900/85 px-4 text-xs text-white shadow-2xl backdrop-blur-xl whitespace-nowrap">
                 <span className="font-medium text-rose-300">Xóa ảnh này?</span>
                 <button
@@ -785,46 +789,31 @@ function ImageInspectorContent({
                 </button>
               </div>
             ) : (
-              <div className="inline-flex h-12 items-center rounded-full border border-white/15 bg-zinc-900/75 p-1 text-zinc-100 shadow-2xl backdrop-blur-xl">
-                <button
-                  type="button"
-                  onClick={() => setConfirmDelete(true)}
-                  title="Xóa ảnh"
-                  aria-label="Xóa ảnh"
-                  className="inline-flex h-10 items-center justify-center rounded-full px-3.5 text-zinc-200 transition-colors hover:bg-rose-500/20 hover:text-rose-300 sm:px-4"
-                >
-                  <Trash2 className="h-5 w-5" />
-                </button>
+              <div className="inline-flex h-12 max-w-full items-center rounded-full border border-white/15 bg-zinc-900/75 p-1 text-zinc-100 shadow-2xl backdrop-blur-xl">
+                {canManage && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDelete(true)}
+                      title="Xóa ảnh"
+                      aria-label="Xóa ảnh"
+                      className="inline-flex h-10 items-center justify-center rounded-full px-2.5 text-zinc-200 transition-colors hover:bg-rose-500/20 hover:text-rose-300 sm:px-4"
+                    >
+                      <Trash2 className="h-5 w-5" />
+                    </button>
 
-                <span aria-hidden="true" className="mx-0.5 h-5 w-px bg-white/15" />
+                    <span aria-hidden="true" className="mx-0.5 h-5 w-px bg-white/15" />
+                  </>
+                )}
 
                 <button
                   type="button"
                   onClick={handleDownload}
                   title="Tải xuống ảnh gốc"
                   aria-label="Tải xuống ảnh gốc"
-                  className="inline-flex h-10 items-center justify-center rounded-full px-3.5 text-zinc-200 transition-colors hover:bg-white/10 hover:text-white sm:px-4"
+                  className="inline-flex h-10 items-center justify-center rounded-full px-2.5 text-zinc-200 transition-colors hover:bg-white/10 hover:text-white sm:px-4"
                 >
                   <Download className="h-5 w-5" />
-                </button>
-
-                <span aria-hidden="true" className="mx-0.5 h-5 w-px bg-white/15" />
-
-                <button
-                  type="button"
-                  onClick={() => onUpdate(image.id, { isFavorite: !image.isFavorite })}
-                  title={image.isFavorite ? 'Bỏ yêu thích' : 'Yêu thích'}
-                  aria-label={image.isFavorite ? 'Bỏ yêu thích' : 'Yêu thích'}
-                  className={`inline-flex h-10 items-center justify-center rounded-full px-3.5 transition-colors sm:px-4 ${
-                    image.isFavorite
-                      ? 'text-rose-400 hover:bg-rose-500/20'
-                      : 'text-zinc-200 hover:bg-white/10 hover:text-white'
-                  }`}
-                >
-                  <Heart
-                    className="h-5 w-5"
-                    fill={image.isFavorite ? 'currentColor' : 'none'}
-                  />
                 </button>
 
                 <span aria-hidden="true" className="mx-0.5 h-5 w-px bg-white/15" />
@@ -835,7 +824,7 @@ function ImageInspectorContent({
                   title="Thông tin ảnh"
                   aria-label="Hiển thị thông tin ảnh"
                   aria-expanded={showInfo}
-                  className={`inline-flex h-10 items-center justify-center rounded-full px-3.5 transition-colors sm:px-4 ${
+                  className={`inline-flex h-10 items-center justify-center rounded-full px-2.5 transition-colors sm:px-4 ${
                     showInfo
                       ? 'bg-white text-zinc-950'
                       : 'text-zinc-200 hover:bg-white/10 hover:text-white'
@@ -843,6 +832,22 @@ function ImageInspectorContent({
                 >
                   <Info className="h-5 w-5" />
                 </button>
+
+                {onCreateOrderFromImage && (
+                  <>
+                    <span aria-hidden="true" className="mx-0.5 h-5 w-px bg-white/15" />
+                    <button
+                      type="button"
+                      onClick={() => onCreateOrderFromImage(image)}
+                      title="Tạo đơn hàng với ảnh mẫu này"
+                      aria-label="Tạo đơn hàng với ảnh mẫu này"
+                      className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-full px-3 text-xs font-semibold text-blue-300 transition-colors hover:bg-blue-500/20 hover:text-blue-200 sm:px-4 whitespace-nowrap"
+                    >
+                      <ShoppingBag className="h-4 w-4 shrink-0" />
+                      <span>Tạo đơn hàng</span>
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </motion.div>
@@ -906,13 +911,22 @@ function ImageInspectorContent({
                   <input
                     type="text"
                     value={title}
-                    onChange={(e) => setTitle(e.target.value)}
+                    readOnly={!canManage}
+                    onChange={(e) => {
+                      if (!canManage) return;
+                      setTitle(e.target.value);
+                    }}
                     onBlur={() => {
+                      if (!canManage) return;
                       if (title.trim() && title !== image.title) {
                         triggerSave({ title: title.trim() });
                       }
                     }}
-                    className="h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-950 focus:border-blue-600 focus:outline-none dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
+                    className={`h-10 w-full rounded-lg border border-zinc-200 px-3 text-sm font-medium focus:outline-none dark:border-zinc-800 dark:text-zinc-100 ${
+                      canManage
+                        ? 'bg-white text-zinc-950 focus:border-blue-600 dark:bg-zinc-900'
+                        : 'bg-zinc-50 text-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-300'
+                    }`}
                   />
                 </div>
 
@@ -922,16 +936,22 @@ function ImageInspectorContent({
                     <label className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
                       Danh mục
                     </label>
-                    <button
-                      type="button"
-                      onClick={() => setShowNewCat((v) => !v)}
-                      className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
-                    >
-                      <Plus className="h-3 w-3" />
-                      <span>Tạo danh mục</span>
-                    </button>
+                    {canManage && (
+                      <button
+                        type="button"
+                        onClick={() => setShowNewCat((v) => !v)}
+                        className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+                      >
+                        <Plus className="h-3 w-3" />
+                        <span>Tạo danh mục</span>
+                      </button>
+                    )}
                   </div>
-                  {showNewCat ? (
+                  {!canManage ? (
+                    <div className="flex h-10 w-full items-center rounded-lg border border-zinc-200 bg-zinc-50 px-3 text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300">
+                      {categories.find((c) => c.id === categoryId)?.name || 'Chưa phân loại'}
+                    </div>
+                  ) : showNewCat ? (
                     <div className="flex items-center gap-1.5">
                       <input
                         type="text"
@@ -976,14 +996,23 @@ function ImageInspectorContent({
                   <textarea
                     rows={4}
                     value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
+                    readOnly={!canManage}
+                    onChange={(e) => {
+                      if (!canManage) return;
+                      setNotes(e.target.value);
+                    }}
                     onBlur={() => {
+                      if (!canManage) return;
                       if (notes !== image.notes) {
                         triggerSave({ notes: notes.trim() });
                       }
                     }}
-                    placeholder="Ghi chú về ánh sáng, bố cục, chất liệu..."
-                    className="w-full rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-900 focus:border-blue-600 focus:outline-none dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
+                    placeholder={canManage ? 'Ghi chú về ánh sáng, bố cục, chất liệu...' : 'Không có ghi chú'}
+                    className={`w-full rounded-lg border border-zinc-200 p-3 text-sm focus:outline-none dark:border-zinc-800 dark:text-zinc-100 ${
+                      canManage
+                        ? 'bg-white text-zinc-900 focus:border-blue-600 dark:bg-zinc-900'
+                        : 'bg-zinc-50 text-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-300'
+                    }`}
                   />
                 </div>
 
@@ -1011,40 +1040,42 @@ function ImageInspectorContent({
               </div>
 
               {/* Delete Footer */}
-              <div className="border-t border-zinc-200 p-4 dark:border-zinc-800">
-                {confirmDelete ? (
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-medium text-rose-600 dark:text-rose-400">
-                      Xác nhận xóa vĩnh viễn ảnh này?
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setConfirmDelete(false)}
-                        className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:border-zinc-700 dark:text-zinc-300"
-                      >
-                        Hủy
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onDelete(image.id)}
-                        className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-700"
-                      >
-                        Xóa ngay
-                      </button>
+              {canManage && (
+                <div className="border-t border-zinc-200 p-4 dark:border-zinc-800">
+                  {confirmDelete ? (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-rose-600 dark:text-rose-400">
+                        Xác nhận xóa vĩnh viễn ảnh này?
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDelete(false)}
+                          className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:border-zinc-700 dark:text-zinc-300"
+                        >
+                          Hủy
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onDelete(image.id)}
+                          className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-700"
+                        >
+                          Xóa ngay
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setConfirmDelete(true)}
-                    className="flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-200 py-2 text-xs font-medium text-rose-600 transition-colors hover:bg-rose-50 dark:border-zinc-800 dark:text-rose-400 dark:hover:bg-rose-950/30"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    <span>Xóa ảnh mẫu khỏi kho cục bộ</span>
-                  </button>
-                )}
-              </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDelete(true)}
+                      className="flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-200 py-2 text-xs font-medium text-rose-600 transition-colors hover:bg-rose-50 dark:border-zinc-800 dark:text-rose-400 dark:hover:bg-rose-950/30"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      <span>Xóa ảnh mẫu khỏi server</span>
+                    </button>
+                  )}
+                </div>
+              )}
             </motion.aside>
           )}
         </AnimatePresence>

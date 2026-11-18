@@ -36,6 +36,7 @@ interface CategoriesViewProps {
   onDeleteCategory: (id: string) => Promise<void>;
   onDeleteCategories?: (ids: string[]) => Promise<void>;
   onOpenCategoryInLibrary: (categoryId: string, sourceRect?: DOMRect) => void;
+  canManage?: boolean;
 }
 
 const PRESET_COLORS = [
@@ -68,6 +69,7 @@ export function CategoriesView({
   onDeleteCategory,
   onDeleteCategories,
   onOpenCategoryInLibrary,
+  canManage = true,
 }: CategoriesViewProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<CategorySortOption>('relevance');
@@ -88,6 +90,16 @@ export function CategoriesView({
   const [editColor, setEditColor] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+
+  useEffect(() => {
+    if (!canManage) {
+      setIsBatchMode(false);
+      setSelectedIds([]);
+      setConfirmBatchDelete(false);
+      setIsCreateOpen(false);
+      setEditingCategory(null);
+    }
+  }, [canManage]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -144,6 +156,7 @@ export function CategoriesView({
   };
 
   const openCreateModal = () => {
+    if (!canManage) return;
     setName('');
     setDescription('');
     setColor((prev) => getRandomPresetColor(prev));
@@ -152,7 +165,7 @@ export function CategoriesView({
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || isSubmitting) return;
+    if (!canManage || !name.trim() || isSubmitting) return;
     setIsSubmitting(true);
     try {
       await onCreateCategory({
@@ -170,6 +183,7 @@ export function CategoriesView({
   };
 
   const openEditModal = (cat: Category) => {
+    if (!canManage) return;
     setEditingCategory(cat);
     setEditName(cat.name);
     setEditDesc(cat.description);
@@ -179,7 +193,7 @@ export function CategoriesView({
 
   const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingCategory || !editName.trim() || isSavingEdit) return;
+    if (!canManage || !editingCategory || !editName.trim() || isSavingEdit) return;
     setIsSavingEdit(true);
     try {
       await onUpdateCategory({
@@ -195,7 +209,7 @@ export function CategoriesView({
   };
 
   const handleDelete = async () => {
-    if (!editingCategory || isSavingEdit) return;
+    if (!canManage || !editingCategory || isSavingEdit) return;
     setIsSavingEdit(true);
     try {
       await onDeleteCategory(editingCategory.id);
@@ -206,7 +220,7 @@ export function CategoriesView({
   };
 
   const handleBatchDelete = async () => {
-    if (selectedIds.length === 0) return;
+    if (!canManage || selectedIds.length === 0) return;
     if (onDeleteCategories) {
       await onDeleteCategories(selectedIds);
     } else {
@@ -301,7 +315,9 @@ export function CategoriesView({
           <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-6 py-12 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
             {searchQuery.trim()
               ? 'Không tìm thấy danh mục nào khớp từ khóa.'
-              : 'Bạn chưa tạo danh mục nào. Nhấn nút dấu + ở góc dưới bên phải để tạo danh mục mới.'}
+              : canManage
+              ? 'Bạn chưa tạo danh mục nào. Nhấn nút dấu + ở góc dưới bên phải để tạo danh mục mới.'
+              : 'Chưa có danh mục nào. Vào Cài đặt để xác thực Admin nếu cần tạo danh mục mới.'}
           </div>
         ) : viewMode === 'list' ? (
           <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
@@ -309,10 +325,10 @@ export function CategoriesView({
               <table className="w-full border-collapse text-left text-sm">
                 <thead>
                   <tr className="border-b border-zinc-200 bg-zinc-50/70 text-xs font-medium text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-400">
-                    {isBatchMode && <th className="w-10 px-3 py-2.5">Chọn</th>}
+                    {canManage && isBatchMode && <th className="w-10 px-3 py-2.5">Chọn</th>}
                     <th className="px-4 py-2.5">Danh mục</th>
                     <th className="px-4 py-2.5 text-right">Số ảnh</th>
-                    <th className="w-14 px-4 py-2.5 text-right">Sửa</th>
+                    {canManage && <th className="w-14 px-4 py-2.5 text-right">Sửa</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
@@ -374,19 +390,21 @@ export function CategoriesView({
                         <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums text-zinc-600 dark:text-zinc-400 whitespace-nowrap">
                           {catImages.length}
                         </td>
-                        <td
-                          className="px-4 py-2.5 text-right"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => openEditModal(cat)}
-                            aria-label={`Chỉnh sửa ${cat.name}`}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                        {canManage && (
+                          <td
+                            className="px-4 py-2.5 text-right"
+                            onClick={(e) => e.stopPropagation()}
                           >
-                            <Pencil className="h-4 w-4" />
-                          </button>
-                        </td>
+                            <button
+                              type="button"
+                              onClick={() => openEditModal(cat)}
+                              aria-label={`Chỉnh sửa ${cat.name}`}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </button>
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
@@ -536,18 +554,20 @@ export function CategoriesView({
                   </div>
 
                   {/* Frosted Square Edit Button inside image */}
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openEditModal(cat);
-                    }}
-                    aria-label={`Chỉnh sửa ${cat.name}`}
-                    title={`Chỉnh sửa ${cat.name}`}
-                    className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-lg bg-black/45 text-white backdrop-blur-xs transition-colors hover:bg-black/65 sm:right-2.5 sm:top-2.5 sm:h-8 sm:w-8"
-                  >
-                    <Pencil className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                  </button>
+                  {canManage && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openEditModal(cat);
+                      }}
+                      aria-label={`Chỉnh sửa ${cat.name}`}
+                      title={`Chỉnh sửa ${cat.name}`}
+                      className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-lg bg-black/45 text-white backdrop-blur-xs transition-colors hover:bg-black/65 sm:right-2.5 sm:top-2.5 sm:h-8 sm:w-8"
+                    >
+                      <Pencil className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                    </button>
+                  )}
                 </article>
               );
             })}
@@ -571,12 +591,15 @@ export function CategoriesView({
         onSortChange={(val) => setSortBy(val as CategorySortOption)}
         isBatchMode={isBatchMode}
         onToggleBatchMode={() => {
+          if (!canManage) return;
           setIsBatchMode((v) => !v);
           setSelectedIds([]);
           setConfirmBatchDelete(false);
         }}
         onAddClick={openCreateModal}
         addTitle="Tạo danh mục mới"
+        canAdd={canManage}
+        canBatch={canManage}
         disableShortcuts={disableShortcuts || isCreateOpen || Boolean(editingCategory)}
       />
 

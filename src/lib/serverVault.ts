@@ -1,10 +1,11 @@
-import type { Category, VaultImageRecord, VaultImageView } from '../types/vault';
+import type { Category, OrderRecord, VaultImageRecord, VaultImageView } from '../types/vault';
 import { getAllCategories, getAllImages, type VaultBackupBundle } from './db';
 import { processImageBlob } from './imageProcessor';
 
 export interface ServerVaultResponse {
   categories: Category[];
   images: VaultImageView[];
+  orders: OrderRecord[];
   seeded: boolean;
 }
 
@@ -198,6 +199,108 @@ export async function deleteServerImages(ids: string[]): Promise<void> {
 
 export async function clearServerVault(): Promise<void> {
   await assertOk(await fetch('/api/vault', { method: 'DELETE' }));
+}
+
+export interface CreateServerOrderInput {
+  customerName: string;
+  customerPhone: string;
+  productName: string;
+  productDescription: string;
+  pickupTime: string;
+  price: number;
+  depositAmount: number;
+  libraryImages: Array<{ imageId: string; title: string }>;
+  customFiles: File[];
+}
+
+export async function createServerOrder(input: CreateServerOrderInput): Promise<OrderRecord> {
+  const formData = new FormData();
+  formData.append(
+    'metadata',
+    JSON.stringify({
+      customerName: input.customerName,
+      customerPhone: input.customerPhone,
+      productName: input.productName,
+      productDescription: input.productDescription,
+      pickupTime: input.pickupTime,
+      price: input.price,
+      depositAmount: input.depositAmount,
+      libraryImages: input.libraryImages,
+    })
+  );
+  for (const file of input.customFiles) {
+    formData.append('customImages', file, file.name || 'sample.jpg');
+  }
+
+  const res = await assertOk(
+    await fetch('/api/orders', {
+      method: 'POST',
+      body: formData,
+    })
+  );
+  return res.json();
+}
+
+export interface UpdateServerOrderInput extends CreateServerOrderInput {
+  keepCustomImageIds: string[];
+  isReady?: boolean;
+  isReceived?: boolean;
+}
+
+export async function saveFullServerOrder(
+  orderId: string,
+  input: UpdateServerOrderInput
+): Promise<OrderRecord> {
+  const formData = new FormData();
+  formData.append(
+    'metadata',
+    JSON.stringify({
+      customerName: input.customerName,
+      customerPhone: input.customerPhone,
+      productName: input.productName,
+      productDescription: input.productDescription,
+      pickupTime: input.pickupTime,
+      price: input.price,
+      depositAmount: input.depositAmount,
+      isReady: input.isReady,
+      isReceived: input.isReceived,
+      libraryImages: input.libraryImages,
+      keepCustomImageIds: input.keepCustomImageIds,
+    })
+  );
+  for (const file of input.customFiles) {
+    formData.append('customImages', file, file.name || 'sample.jpg');
+  }
+
+  const res = await assertOk(
+    await fetch(`/api/orders/${encodeURIComponent(orderId)}`, {
+      method: 'PUT',
+      body: formData,
+    })
+  );
+  return res.json();
+}
+
+export async function updateServerOrder(
+  orderId: string,
+  patch: Partial<Pick<OrderRecord, 'pickupTime' | 'price' | 'depositAmount' | 'isPaid' | 'isReady' | 'isReceived'>>
+): Promise<OrderRecord> {
+  const res = await assertOk(
+    await fetch(`/api/orders/${encodeURIComponent(orderId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    })
+  );
+  return res.json();
+}
+
+export async function deleteServerOrder(orderId: string): Promise<void> {
+  await assertOk(
+    await fetch(`/api/orders/${encodeURIComponent(orderId)}`, {
+      method: 'DELETE',
+    })
+  );
 }
 
 export async function exportServerBackup(): Promise<VaultBackupBundle> {

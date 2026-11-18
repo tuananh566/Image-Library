@@ -1,4 +1,4 @@
-import { Heart, Images, LayoutGrid, Plus, Settings, X } from 'lucide-react';
+import { Images, LayoutGrid, Settings, ShoppingBag, X } from 'lucide-react';
 import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import { useRef, useState } from 'react';
 import type { AppTab, Category } from '../types/vault';
@@ -23,11 +23,10 @@ interface SidebarProps {
   onSelectTab: (tab: AppTab) => void;
   categories: Category[];
   totalCount: number;
-  favoriteCount: number;
+  ordersCount: number;
   categoryCounts: Record<string, number>;
-  selectedCategoryId: string | 'all' | 'uncategorized' | 'favorites';
-  onSelectCategory: (id: string | 'all' | 'uncategorized' | 'favorites') => void;
-  onCreateCategory: (name: string) => Promise<void>;
+  selectedCategoryId: string | 'all' | 'uncategorized';
+  onSelectCategory: (id: string | 'all' | 'uncategorized') => void;
   onOpenSettings: () => void;
   isOpenMobile: boolean;
   onCloseMobile: () => void;
@@ -42,11 +41,10 @@ export function Sidebar({
   onSelectTab,
   categories,
   totalCount,
-  favoriteCount,
+  ordersCount,
   categoryCounts,
   selectedCategoryId,
   onSelectCategory,
-  onCreateCategory,
   onOpenSettings,
   isOpenMobile,
   onCloseMobile,
@@ -55,27 +53,10 @@ export function Sidebar({
   widthStepIndex,
   onWidthStepChange,
 }: SidebarProps) {
-  const [isAddingCat, setIsAddingCat] = useState(false);
-  const [newCatName, setNewCatName] = useState('');
-  const [isSaving, setIsSaving] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
 
   const asideRef = useRef<HTMLElement>(null);
   const mobileTouchStartXRef = useRef<number | null>(null);
-
-  const handleQuickCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = newCatName.trim();
-    if (!trimmed || isSaving) return;
-    setIsSaving(true);
-    try {
-      await onCreateCategory(trimmed);
-      setNewCatName('');
-      setIsAddingCat(false);
-    } finally {
-      setIsSaving(false);
-    }
-  };
 
   const startResizeDrag = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -145,33 +126,73 @@ export function Sidebar({
 
   const renderScrollableContent = () => {
     return (
-      <div className="flex flex-col gap-6 px-4 py-5">
-        {/* Quick Views */}
-        <div>
-          <h2 className="mb-2 px-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
-            Truy cập nhanh
-          </h2>
-          <div className="flex flex-col gap-0.5">
-            <button
-              type="button"
-              onClick={() => {
-                onSelectTab('categories');
-                onCloseMobile();
-              }}
-              className={`flex h-10 items-center justify-between rounded-lg px-2.5 text-sm font-medium transition-colors duration-150 ${
-                activeTab === 'categories'
-                  ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950'
-                  : 'text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900'
-              }`}
-            >
-              <span className="flex items-center gap-2.5 truncate">
-                <LayoutGrid className="h-4 w-4 shrink-0" />
-                <span className="truncate">Danh mục</span>
-              </span>
-              <span className="tabular-nums text-xs opacity-75">
-                {categories.length}
-              </span>
-            </button>
+      <div className="flex min-h-full flex-col justify-between gap-4 px-4 py-4">
+        {/* Navigation & Sub-categories */}
+        <div className="flex flex-col gap-0.5">
+          <button
+            type="button"
+            onClick={() => {
+              onSelectTab('categories');
+              onCloseMobile();
+            }}
+            className={`flex h-10 items-center justify-between rounded-lg px-2.5 text-sm font-medium transition-colors duration-150 ${
+              activeTab === 'categories'
+                ? 'bg-zinc-100 text-zinc-950'
+                : 'text-zinc-300 hover:bg-zinc-900'
+            }`}
+          >
+            <span className="flex items-center gap-2.5 truncate">
+              <LayoutGrid className="h-4 w-4 shrink-0" />
+              <span className="truncate">Album</span>
+            </span>
+            <span className="tabular-nums text-xs opacity-75">
+              {categories.length}
+            </span>
+          </button>
+
+            {/* Compact Album sub-list nested underneath "Album" */}
+            <div className="mb-1.5 ml-3 mt-1 border-l border-zinc-800 pl-2.5">
+              <div className="flex flex-col gap-0.5">
+                {categories.length === 0 ? (
+                  <p className="px-1.5 py-1 text-[11px] text-zinc-500">
+                    Chưa có danh mục nào.
+                  </p>
+                ) : (
+                  categories.map((cat) => {
+                    const isSelected = activeTab === 'library' && selectedCategoryId === cat.id;
+                    const count = categoryCounts[cat.id] || 0;
+                    return (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        onClick={() => {
+                          onSelectTab('library');
+                          onSelectCategory(cat.id);
+                          onCloseMobile();
+                        }}
+                        className={`flex h-7 items-center justify-between rounded-md px-2 text-xs transition-colors duration-150 ${
+                          isSelected
+                            ? 'bg-blue-950/60 font-semibold text-blue-300'
+                            : 'font-medium text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'
+                        }`}
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span
+                            aria-hidden="true"
+                            className="h-2.5 w-2.5 shrink-0 rounded-full"
+                            style={{ backgroundColor: cat.color || '#2563EB' }}
+                          />
+                          <span className="truncate">{cat.name}</span>
+                        </span>
+                        <span className="tabular-nums text-[11px] text-zinc-500">
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
 
             <button
               type="button"
@@ -182,8 +203,8 @@ export function Sidebar({
               }}
               className={`flex h-10 items-center justify-between rounded-lg px-2.5 text-sm font-medium transition-colors duration-150 ${
                 activeTab === 'library' && selectedCategoryId === 'all'
-                  ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950'
-                  : 'text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900'
+                  ? 'bg-zinc-100 text-zinc-950'
+                  : 'text-zinc-300 hover:bg-zinc-900'
               }`}
             >
               <span className="flex items-center gap-2.5 truncate">
@@ -192,123 +213,42 @@ export function Sidebar({
               </span>
               <span className="tabular-nums text-xs opacity-75">{totalCount}</span>
             </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                onSelectTab('library');
-                onSelectCategory('favorites');
-                onCloseMobile();
-              }}
-              className={`flex h-10 items-center justify-between rounded-lg px-2.5 text-sm font-medium transition-colors duration-150 ${
-                activeTab === 'library' && selectedCategoryId === 'favorites'
-                  ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950'
-                  : 'text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900'
-              }`}
-            >
-              <span className="flex items-center gap-2.5 truncate">
-                <Heart className="h-4 w-4 shrink-0" />
-                <span className="truncate">Yêu thích</span>
-              </span>
-              <span className="tabular-nums text-xs opacity-75">
-                {favoriteCount}
-              </span>
-            </button>
-          </div>
         </div>
 
-        {/* Custom Categories */}
-        <div className="border-t border-zinc-200 pt-5 dark:border-zinc-800">
-          <div className="mb-2 flex items-center justify-between px-2">
-            <h2 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
-              Danh mục tùy biến
-            </h2>
-            <button
-              type="button"
-              onClick={() => setIsAddingCat((v) => !v)}
-              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950/50"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              <span>Tạo mới</span>
-            </button>
-          </div>
-
-          {isAddingCat && (
-            <form onSubmit={handleQuickCreate} className="mb-2.5 px-1">
-              <div className="flex items-center gap-1.5">
-                <input
-                  type="text"
-                  value={newCatName}
-                  onChange={(e) => setNewCatName(e.target.value)}
-                  placeholder="Tên danh mục..."
-                  autoFocus
-                  className="h-9 min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-2.5 text-sm text-zinc-900 focus:border-blue-600 focus:outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                />
-                <button
-                  type="submit"
-                  disabled={!newCatName.trim() || isSaving}
-                  className="h-9 rounded-lg bg-blue-600 px-3 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap shrink-0"
-                >
-                  Lưu
-                </button>
-              </div>
-            </form>
-          )}
-
-          <div className="flex flex-col gap-0.5">
-            {categories.length === 0 ? (
-              <p className="px-2 py-2 text-xs text-zinc-500 dark:text-zinc-400">
-                Chưa có danh mục nào.
-              </p>
-            ) : (
-              categories.map((cat) => {
-                const isSelected = activeTab === 'library' && selectedCategoryId === cat.id;
-                const count = categoryCounts[cat.id] || 0;
-                return (
-                  <button
-                    key={cat.id}
-                    type="button"
-                    onClick={() => {
-                      onSelectTab('library');
-                      onSelectCategory(cat.id);
-                      onCloseMobile();
-                    }}
-                    className={`flex h-10 items-center justify-between rounded-lg px-2.5 text-sm transition-colors duration-150 ${
-                      isSelected
-                        ? 'bg-blue-50 font-semibold text-blue-700 dark:bg-blue-950/60 dark:text-blue-300'
-                        : 'font-medium text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900'
-                    }`}
-                  >
-                    <span className="flex items-center gap-2.5 min-w-0">
-                      <span
-                        aria-hidden="true"
-                        className="h-3.5 w-3.5 shrink-0 rounded-full"
-                        style={{ backgroundColor: cat.color || '#2563EB' }}
-                      />
-                      <span className="truncate">{cat.name}</span>
-                    </span>
-                    <span className="tabular-nums text-xs text-zinc-500 dark:text-zinc-400">
-                      {count}
-                    </span>
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </div>
+        {/* Bottom of Upper Section: Larger White-Bordered Orders Button */}
+        <button
+          type="button"
+          onClick={() => {
+            onSelectTab('orders');
+            onCloseMobile();
+          }}
+          className={`flex h-12 w-full shrink-0 items-center justify-between rounded-xl border border-white/90 px-3.5 text-base font-semibold transition-colors duration-150 ${
+            activeTab === 'orders'
+              ? 'bg-zinc-100 text-zinc-950'
+              : 'bg-zinc-900/60 text-zinc-50 hover:bg-zinc-900'
+          }`}
+        >
+          <span className="flex items-center gap-2.5 truncate">
+            <ShoppingBag className="h-5 w-5 shrink-0" />
+            <span className="truncate">Đơn hàng</span>
+          </span>
+          <span className="tabular-nums text-sm font-bold opacity-85">
+            {ordersCount}
+          </span>
+        </button>
       </div>
     );
   };
 
   const settingsFooter = (
-    <div className="shrink-0 border-t border-zinc-200 p-3 dark:border-zinc-800">
+    <div className="shrink-0 border-t border-zinc-800 p-3">
       <button
         type="button"
         onClick={() => {
           onOpenSettings();
           onCloseMobile();
         }}
-        className="flex h-10 w-full items-center gap-2.5 rounded-lg px-2.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
+        className="flex h-10 w-full items-center gap-2.5 rounded-lg px-2.5 text-sm font-medium text-zinc-300 transition-colors hover:bg-zinc-900"
       >
         <Settings className="h-4 w-4 shrink-0" />
         <span>Cài đặt</span>
@@ -330,18 +270,18 @@ export function Sidebar({
         className={`hidden h-full shrink-0 flex-col overflow-hidden border-r bg-zinc-50/60 md:flex dark:bg-zinc-950 ${widthClass} ${
           isResizing
             ? 'select-none transition-none'
-            : 'transition-[width,border-color] duration-150 ease-out'
+            : 'transition-[width,border-color] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]'
         }`}
       >
         <div
-          className={`flex h-full min-h-0 shrink-0 flex-col ${currentStep.innerClassName} ${
+          className={`flex h-full min-h-0 shrink-0 flex-col will-change-transform ${currentStep.innerClassName} ${
             isResizing
               ? 'transition-none'
-              : 'transition-opacity duration-150 ease-out'
+              : 'transition-[transform,opacity] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]'
           } ${
             isDesktopCollapsed
-              ? 'pointer-events-none opacity-0'
-              : 'opacity-100'
+              ? 'pointer-events-none -translate-x-full opacity-0'
+              : 'translate-x-0 opacity-100'
           }`}
         >
           <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
@@ -382,7 +322,7 @@ export function Sidebar({
         />
       </div>
 
-      {/* Mobile Drawer — pure fade animation + swipe-left to close */}
+      {/* Mobile Drawer — slide-in/slide-out drawer + backdrop fade + swipe-left to close */}
       <MotionConfig reducedMotion="user">
         <AnimatePresence>
           {isOpenMobile && (
@@ -391,15 +331,15 @@ export function Sidebar({
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                transition={{ duration: 0.16, ease: 'easeOut' }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
                 className="fixed inset-0 bg-zinc-950/50 backdrop-blur-xs"
                 onClick={onCloseMobile}
               />
               <motion.aside
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.16, ease: 'easeOut' }}
+                initial={{ x: '-100%' }}
+                animate={{ x: 0 }}
+                exit={{ x: '-100%' }}
+                transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
                 onTouchStart={(e) => {
                   if (e.touches.length === 1) {
                     mobileTouchStartXRef.current = e.touches[0].clientX;
@@ -418,9 +358,9 @@ export function Sidebar({
                 }}
                 className="relative z-10 flex h-full w-72 max-w-[85vw] flex-col border-r border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
               >
-                <div className="flex h-14 shrink-0 items-center justify-between border-b border-zinc-200 px-4 dark:border-zinc-800">
-                  <span className="font-display text-sm font-semibold text-zinc-950 dark:text-zinc-50">
-                    Danh mục & Bộ lọc
+                <div className="flex h-14 shrink-0 items-center justify-between border-b border-zinc-800 px-4">
+                  <span className="font-display text-sm font-semibold text-zinc-50">
+                    Album & Bộ lọc
                   </span>
                   <button
                     type="button"

@@ -36,6 +36,33 @@ interface ServerImageRecord {
   updatedAt: number;
   storedFile: string;
   storedThumbFile: string;
+  thumbMimeType?: string;
+}
+
+interface ServerOrderSampleImage {
+  id: string;
+  sourceImageId?: string | null;
+  title: string;
+  storedFile?: string;
+  mimeType?: string;
+}
+
+interface ServerOrderRecord {
+  id: string;
+  orderCode: string;
+  customerName: string;
+  customerPhone: string;
+  productName: string;
+  productDescription: string;
+  pickupTime?: string;
+  price: number;
+  depositAmount?: number;
+  isPaid?: boolean;
+  isReady?: boolean;
+  isReceived?: boolean;
+  sampleImages: ServerOrderSampleImage[];
+  createdAt: number;
+  updatedAt: number;
 }
 
 interface VaultDataFile {
@@ -43,12 +70,14 @@ interface VaultDataFile {
   seeded: boolean;
   categories: CategoryRecord[];
   images: ServerImageRecord[];
+  orders?: ServerOrderRecord[];
 }
 
 const PORT = Number(process.env.PORT) || 3000;
 const DATA_DIR = path.resolve(process.cwd(), process.env.DATA_DIR || 'data');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const THUMBS_DIR = path.join(DATA_DIR, 'thumbs');
+const ORDER_IMAGES_DIR = path.join(DATA_DIR, 'order-images');
 const VAULT_FILE = path.join(DATA_DIR, 'vault.json');
 
 const MIME_EXT_MAP: Record<string, string> = {
@@ -59,6 +88,10 @@ const MIME_EXT_MAP: Record<string, string> = {
   'image/gif': '.gif',
   'image/avif': '.avif',
   'image/svg+xml': '.svg',
+  'image/bmp': '.bmp',
+  'image/heic': '.heic',
+  'image/heif': '.heif',
+  'image/tiff': '.tiff',
 };
 
 function sanitizeId(raw: string): string {
@@ -87,6 +120,7 @@ async function ensureStorageReady(): Promise<void> {
   await fsp.mkdir(DATA_DIR, { recursive: true });
   await fsp.mkdir(UPLOADS_DIR, { recursive: true });
   await fsp.mkdir(THUMBS_DIR, { recursive: true });
+  await fsp.mkdir(ORDER_IMAGES_DIR, { recursive: true });
 
   if (!fs.existsSync(VAULT_FILE)) {
     const initial: VaultDataFile = {
@@ -94,6 +128,7 @@ async function ensureStorageReady(): Promise<void> {
       seeded: false,
       categories: [],
       images: [],
+      orders: [],
     };
     await writeVaultFile(initial);
   }
@@ -109,9 +144,10 @@ async function readVaultFile(): Promise<VaultDataFile> {
       seeded: Boolean(parsed.seeded),
       categories: Array.isArray(parsed.categories) ? parsed.categories : [],
       images: Array.isArray(parsed.images) ? parsed.images : [],
+      orders: Array.isArray(parsed.orders) ? parsed.orders : [],
     };
   } catch {
-    return { version: 1, seeded: false, categories: [], images: [] };
+    return { version: 1, seeded: false, categories: [], images: [], orders: [] };
   }
 }
 
@@ -159,6 +195,49 @@ function toClientImage(rec: ServerImageRecord) {
   };
 }
 
+function toClientOrder(rec: ServerOrderRecord) {
+  const v = rec.updatedAt || rec.createdAt || 1;
+  const price = Number(rec.price) || 0;
+  const depositAmount = Math.max(0, Number(rec.depositAmount) || 0);
+  const isPaid = Boolean(rec.isPaid) || (price > 0 && depositAmount >= price);
+  return {
+    id: rec.id,
+    orderCode: rec.orderCode,
+    customerName: rec.customerName,
+    customerPhone: rec.customerPhone,
+    productName: rec.productName,
+    productDescription: rec.productDescription,
+    pickupTime: String(rec.pickupTime || ''),
+    price,
+    depositAmount,
+    isPaid,
+    isReady: Boolean(rec.isReady),
+    isReceived: Boolean(rec.isReceived),
+    createdAt: rec.createdAt,
+    updatedAt: rec.updatedAt,
+    sampleImages: (rec.sampleImages || []).map((img) => {
+      if (img.storedFile) {
+        const url = `/api/files/order-image/${encodeURIComponent(img.storedFile)}?v=${v}`;
+        return {
+          id: img.id,
+          sourceImageId: null,
+          title: img.title || 'Ảnh mẫu đơn hàng',
+          thumbnailUrl: url,
+          fullUrl: url,
+        };
+      }
+      const sourceId = img.sourceImageId || img.id;
+      return {
+        id: img.id,
+        sourceImageId: sourceId,
+        title: img.title || 'Ảnh mẫu',
+        thumbnailUrl: `/api/files/thumb/${encodeURIComponent(sourceId)}?v=${v}`,
+        fullUrl: `/api/files/image/${encodeURIComponent(sourceId)}?v=${v}`,
+      };
+    }),
+  };
+}
+
 function base64DataUrlToBuffer(dataUrl: string): { buffer: Buffer; mimeType: string } | null {
   const match = /^data:([^;]+);base64,(.+)$/s.exec(dataUrl);
   if (!match) return null;
@@ -175,7 +254,7 @@ async function startServer() {
   const upload = multer({
     storage: multer.memoryStorage(),
     limits: {
-      fileSize: 60 * 1024 * 1024,
+      fileSize: 100 * 1024 * 1024,
       fieldSize: 5 * 1024 * 1024,
     },
   });
@@ -218,10 +297,29 @@ async function startServer() {
       const images = [...vault.images]
         .sort((a, b) => b.createdAt - a.createdAt)
         .map(toClientImage);
+      const nowMs = Date.now();
+      const orders = [...(vault.orders || [])]
+        .sort((a, b) => {
+          const aMs = a.pickupTime ? new Date(a.pickupTime).getTime() : NaN;
+          const bMs = b.pickupTime ? new Date(b.pickupTime).getTime() : NaN;
+          const aValid = Number.isFinite(aMs);
+          const bValid = Number.isFinite(bMs);
+          if (!aValid && !bValid) return b.createdAt - a.createdAt;
+          if (!aValid) return 1;
+          if (!bValid) return -1;
+          const aUpcoming = aMs >= nowMs;
+          const bUpcoming = bMs >= nowMs;
+          if (aUpcoming && !bUpcoming) return -1;
+          if (!aUpcoming && bUpcoming) return 1;
+          if (aUpcoming && bUpcoming) return aMs - bMs || b.createdAt - a.createdAt;
+          return bMs - aMs || b.createdAt - a.createdAt;
+        })
+        .map(toClientOrder);
 
       res.json({
         categories,
         images,
+        orders,
         seeded: vault.seeded,
       });
     } catch (err) {
@@ -274,7 +372,7 @@ async function startServer() {
       }
       const thumbPath = resolveSafeChild(THUMBS_DIR, img.storedThumbFile);
       if (thumbPath && fs.existsSync(thumbPath)) {
-        res.setHeader('Content-Type', 'image/jpeg');
+        res.setHeader('Content-Type', img.thumbMimeType || 'image/jpeg');
         res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
         res.sendFile(thumbPath);
         return;
@@ -287,6 +385,20 @@ async function startServer() {
       res.setHeader('Content-Type', img.mimeType || 'image/jpeg');
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       res.sendFile(origPath);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.get('/api/files/order-image/:fileName', async (req, res, next) => {
+    try {
+      const filePath = resolveSafeChild(ORDER_IMAGES_DIR, req.params.fileName);
+      if (!filePath || !fs.existsSync(filePath)) {
+        res.status(404).json({ error: 'Order image not found' });
+        return;
+      }
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      res.sendFile(filePath);
     } catch (err) {
       next(err);
     }
@@ -313,7 +425,9 @@ async function startServer() {
         const safeId = sanitizeId(String(rawMeta.id || '')) || crypto.randomUUID();
         const ext = getFileExt(rawMeta.mimeType || mainFile.mimetype, rawMeta.fileName || mainFile.originalname);
         const storedFile = `${safeId}${ext}`;
-        const storedThumbFile = `${safeId}.jpg`;
+        const thumbMimeType = thumbFile?.mimetype || (rawMeta.mimeType || mainFile.mimetype || 'image/jpeg');
+        const thumbExt = getFileExt(thumbMimeType, thumbFile?.originalname);
+        const storedThumbFile = `${safeId}${thumbExt}`;
 
         const origPath = resolveSafeChild(UPLOADS_DIR, storedFile);
         const thumbPath = resolveSafeChild(THUMBS_DIR, storedThumbFile);
@@ -354,6 +468,7 @@ async function startServer() {
           updatedAt: Number(rawMeta.updatedAt) || now,
           storedFile,
           storedThumbFile,
+          thumbMimeType,
         };
 
         await withVaultLock(async (vault) => {
@@ -376,8 +491,320 @@ async function startServer() {
     }
   );
 
+  // Create new order (supports library sample image references + custom uploaded files)
+  app.post(
+    '/api/orders',
+    upload.array('customImages', 10),
+    async (req, res, next) => {
+      try {
+        const rawMeta = typeof req.body?.metadata === 'string' ? JSON.parse(req.body.metadata) : req.body || {};
+        const customerName = String(rawMeta.customerName || '').trim();
+        const customerPhone = String(rawMeta.customerPhone || '').trim();
+        const productName = String(rawMeta.productName || '').trim();
+        const productDescription = String(rawMeta.productDescription || '').trim();
+        const pickupTime = String(rawMeta.pickupTime || '').trim();
+        const price = Math.max(0, Number(rawMeta.price) || 0);
+        const depositAmount = Math.max(0, Number(rawMeta.depositAmount) || 0);
+        const isPaid = price > 0 && depositAmount >= price;
+
+        if (!customerName || !customerPhone || !productName) {
+          res.status(400).json({ error: 'Vui lòng nhập tên khách hàng, số điện thoại và tên sản phẩm' });
+          return;
+        }
+
+        const sampleImages: ServerOrderSampleImage[] = [];
+
+        if (Array.isArray(rawMeta.libraryImages)) {
+          for (const item of rawMeta.libraryImages) {
+            if (!item || !item.imageId) continue;
+            const imageId = String(item.imageId);
+            sampleImages.push({
+              id: `lib-${imageId}-${crypto.randomUUID().slice(0, 6)}`,
+              sourceImageId: imageId,
+              title: String(item.title || 'Ảnh mẫu thư viện'),
+            });
+          }
+        }
+
+        const uploadedFiles = Array.isArray(req.files) ? (req.files as Express.Multer.File[]) : [];
+        for (const file of uploadedFiles) {
+          const fileId = crypto.randomUUID();
+          const ext = getFileExt(file.mimetype, file.originalname);
+          const storedFile = `${fileId}${ext}`;
+          const destPath = resolveSafeChild(ORDER_IMAGES_DIR, storedFile);
+          if (!destPath) continue;
+          await fsp.writeFile(destPath, file.buffer);
+          sampleImages.push({
+            id: fileId,
+            sourceImageId: null,
+            title: path.basename(file.originalname || 'Ảnh mẫu', ext) || 'Ảnh mẫu tải lên',
+            storedFile,
+            mimeType: file.mimetype || 'image/jpeg',
+          });
+        }
+
+        const now = Date.now();
+        const orderId = crypto.randomUUID();
+
+        const created = await withVaultLock(async (vault) => {
+          const existingOrders = vault.orders || [];
+          const nextNum = existingOrders.length + 1;
+          const orderCode = `DH-${String(nextNum).padStart(4, '0')}`;
+          const record: ServerOrderRecord = {
+            id: orderId,
+            orderCode,
+            customerName,
+            customerPhone,
+            productName,
+            productDescription,
+            pickupTime,
+            price,
+            depositAmount,
+            isPaid,
+            isReady: Boolean(rawMeta.isReady),
+            isReceived: Boolean(rawMeta.isReceived),
+            sampleImages,
+            createdAt: now,
+            updatedAt: now,
+          };
+          return {
+            nextVault: {
+              ...vault,
+              orders: [record, ...existingOrders],
+            },
+            result: record,
+          };
+        });
+
+        broadcastVaultUpdated();
+        res.status(201).json(toClientOrder(created));
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // Full edit order (supports updating all fields + adding/removing sample images)
+  app.put(
+    '/api/orders/:id',
+    upload.array('customImages', 10),
+    async (req, res, next) => {
+      try {
+        const orderId = req.params.id;
+        const rawMeta = typeof req.body?.metadata === 'string' ? JSON.parse(req.body.metadata) : req.body || {};
+        const customerName = String(rawMeta.customerName || '').trim();
+        const customerPhone = String(rawMeta.customerPhone || '').trim();
+        const productName = String(rawMeta.productName || '').trim();
+        const productDescription = String(rawMeta.productDescription || '').trim();
+        const pickupTime = String(rawMeta.pickupTime || '').trim();
+        const price = Math.max(0, Number(rawMeta.price) || 0);
+        const depositAmount = Math.max(0, Number(rawMeta.depositAmount) || 0);
+        const isPaid = price > 0 && depositAmount >= price;
+
+        if (!customerName || !customerPhone || !productName) {
+          res.status(400).json({ error: 'Vui lòng nhập tên khách hàng, số điện thoại và tên sản phẩm' });
+          return;
+        }
+
+        const keepCustomIds = new Set(
+          Array.isArray(rawMeta.keepCustomImageIds)
+            ? rawMeta.keepCustomImageIds.map(String)
+            : []
+        );
+
+        const nextLibraryImages: ServerOrderSampleImage[] = [];
+        if (Array.isArray(rawMeta.libraryImages)) {
+          for (const item of rawMeta.libraryImages) {
+            if (!item || !item.imageId) continue;
+            const imageId = String(item.imageId);
+            nextLibraryImages.push({
+              id: `lib-${imageId}-${crypto.randomUUID().slice(0, 6)}`,
+              sourceImageId: imageId,
+              title: String(item.title || 'Ảnh mẫu thư viện'),
+            });
+          }
+        }
+
+        const newCustomImages: ServerOrderSampleImage[] = [];
+        const uploadedFiles = Array.isArray(req.files) ? (req.files as Express.Multer.File[]) : [];
+        for (const file of uploadedFiles) {
+          const fileId = crypto.randomUUID();
+          const ext = getFileExt(file.mimetype, file.originalname);
+          const storedFile = `${fileId}${ext}`;
+          const destPath = resolveSafeChild(ORDER_IMAGES_DIR, storedFile);
+          if (!destPath) continue;
+          await fsp.writeFile(destPath, file.buffer);
+          newCustomImages.push({
+            id: fileId,
+            sourceImageId: null,
+            title: path.basename(file.originalname || 'Ảnh mẫu', ext) || 'Ảnh mẫu tải lên',
+            storedFile,
+            mimeType: file.mimetype || 'image/jpeg',
+          });
+        }
+
+        const lockResult = await withVaultLock(async (vault) => {
+          const existingOrders = vault.orders || [];
+          const target = existingOrders.find((o) => o.id === orderId);
+          if (!target) return { result: null };
+
+          const keptCustom = (target.sampleImages || []).filter(
+            (img) => Boolean(img.storedFile) && keepCustomIds.has(img.id)
+          );
+          const removedCustom = (target.sampleImages || []).filter(
+            (img) => Boolean(img.storedFile) && !keepCustomIds.has(img.id)
+          );
+
+          const nextOrder: ServerOrderRecord = {
+            ...target,
+            customerName,
+            customerPhone,
+            productName,
+            productDescription,
+            pickupTime,
+            price,
+            depositAmount,
+            isPaid,
+            isReady:
+              rawMeta.isReady !== undefined
+                ? Boolean(rawMeta.isReady)
+                : Boolean(target.isReady),
+            isReceived:
+              rawMeta.isReceived !== undefined
+                ? Boolean(rawMeta.isReceived)
+                : Boolean(target.isReceived),
+            sampleImages: [...nextLibraryImages, ...keptCustom, ...newCustomImages],
+            updatedAt: Date.now(),
+          };
+
+          return {
+            nextVault: {
+              ...vault,
+              orders: existingOrders.map((o) => (o.id === orderId ? nextOrder : o)),
+            },
+            result: { nextOrder, removedCustom },
+          };
+        });
+
+        if (!lockResult) {
+          res.status(404).json({ error: 'Order not found' });
+          return;
+        }
+
+        await Promise.all(
+          lockResult.removedCustom
+            .filter((img) => img.storedFile)
+            .map((img) => {
+              const p = resolveSafeChild(ORDER_IMAGES_DIR, img.storedFile!);
+              return p ? fsp.unlink(p).catch(() => {}) : Promise.resolve();
+            })
+        );
+
+        broadcastVaultUpdated();
+        res.json(toClientOrder(lockResult.nextOrder));
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
   // JSON routes
   app.use('/api', express.json({ limit: '100mb' }));
+
+  // Update order (e.g. mark paid or update deposit/pickupTime)
+  app.patch('/api/orders/:id', async (req, res, next) => {
+    try {
+      const orderId = req.params.id;
+      const patch = req.body as Partial<{
+        pickupTime: string;
+        price: number;
+        depositAmount: number;
+        isPaid: boolean;
+        isReady: boolean;
+        isReceived: boolean;
+      }>;
+
+      const updated = await withVaultLock(async (vault) => {
+        const existingOrders = vault.orders || [];
+        const target = existingOrders.find((o) => o.id === orderId);
+        if (!target) return { result: null };
+
+        const nextPrice =
+          patch.price !== undefined ? Math.max(0, Number(patch.price) || 0) : Number(target.price) || 0;
+        const nextDeposit =
+          patch.depositAmount !== undefined
+            ? Math.max(0, Number(patch.depositAmount) || 0)
+            : Math.max(0, Number(target.depositAmount) || 0);
+        const nextIsPaid =
+          patch.isPaid !== undefined
+            ? Boolean(patch.isPaid)
+            : nextPrice > 0 && nextDeposit >= nextPrice;
+
+        const nextOrder: ServerOrderRecord = {
+          ...target,
+          ...(patch.pickupTime !== undefined ? { pickupTime: String(patch.pickupTime) } : {}),
+          ...(patch.isReady !== undefined ? { isReady: Boolean(patch.isReady) } : {}),
+          ...(patch.isReceived !== undefined ? { isReceived: Boolean(patch.isReceived) } : {}),
+          price: nextPrice,
+          depositAmount: nextDeposit,
+          isPaid: nextIsPaid,
+          updatedAt: Date.now(),
+        };
+
+        return {
+          nextVault: {
+            ...vault,
+            orders: existingOrders.map((o) => (o.id === orderId ? nextOrder : o)),
+          },
+          result: nextOrder,
+        };
+      });
+
+      if (!updated) {
+        res.status(404).json({ error: 'Order not found' });
+        return;
+      }
+
+      broadcastVaultUpdated();
+      res.json(toClientOrder(updated));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Delete order & clean up any custom uploaded order images
+  app.delete('/api/orders/:id', async (req, res, next) => {
+    try {
+      const orderId = req.params.id;
+      const removed = await withVaultLock(async (vault) => {
+        const existingOrders = vault.orders || [];
+        const target = existingOrders.find((o) => o.id === orderId) || null;
+        return {
+          nextVault: {
+            ...vault,
+            orders: existingOrders.filter((o) => o.id !== orderId),
+          },
+          result: target,
+        };
+      });
+
+      if (removed) {
+        await Promise.all(
+          (removed.sampleImages || [])
+            .filter((img) => img.storedFile)
+            .map((img) => {
+              const p = resolveSafeChild(ORDER_IMAGES_DIR, img.storedFile!);
+              return p ? fsp.unlink(p).catch(() => {}) : Promise.resolve();
+            })
+        );
+      }
+
+      broadcastVaultUpdated();
+      res.json({ ok: true });
+    } catch (err) {
+      next(err);
+    }
+  });
 
   // Upsert category
   app.post('/api/categories', async (req, res, next) => {
@@ -725,26 +1152,35 @@ async function startServer() {
   // Clear all server vault data
   app.delete('/api/vault', async (_req, res, next) => {
     try {
-      const removedImages = await withVaultLock(async (vault) => ({
+      const removed = await withVaultLock(async (vault) => ({
         nextVault: {
           version: 1,
           seeded: true,
           categories: [],
           images: [],
+          orders: [],
         },
-        result: vault.images,
+        result: { images: vault.images, orders: vault.orders || [] },
       }));
 
-      await Promise.all(
-        removedImages.flatMap((img) => {
+      await Promise.all([
+        ...removed.images.flatMap((img) => {
           const ops: Array<Promise<void>> = [];
           const orig = resolveSafeChild(UPLOADS_DIR, img.storedFile);
           const thumb = resolveSafeChild(THUMBS_DIR, img.storedThumbFile);
           if (orig) ops.push(fsp.unlink(orig).catch(() => {}));
           if (thumb) ops.push(fsp.unlink(thumb).catch(() => {}));
           return ops;
-        })
-      );
+        }),
+        ...removed.orders.flatMap((order) =>
+          (order.sampleImages || [])
+            .filter((img) => img.storedFile)
+            .map((img) => {
+              const p = resolveSafeChild(ORDER_IMAGES_DIR, img.storedFile!);
+              return p ? fsp.unlink(p).catch(() => {}) : Promise.resolve();
+            })
+        ),
+      ]);
 
       broadcastVaultUpdated();
       res.json({ ok: true });
@@ -755,6 +1191,11 @@ async function startServer() {
 
   // API error handler
   app.use('/api', (err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    if (err instanceof multer.MulterError) {
+      const status = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+      res.status(status).json({ error: err.message });
+      return;
+    }
     const message = err instanceof Error ? err.message : 'Server error';
     res.status(500).json({ error: message });
   });

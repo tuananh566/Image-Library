@@ -1,12 +1,18 @@
-import { ImagePlus, Plus, Trash2, Upload, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
-import { formatFileSize, stripFileExtension } from '../lib/imageProcessor';
+import { Camera, ImageIcon, ImagePlus, Plus, Trash2, Upload, X } from 'lucide-react';
+import { useEffect, useId, useRef, useState } from 'react';
+import {
+  formatFileSize,
+  generateId,
+  isImageFile,
+  stripFileExtension,
+} from '../lib/imageProcessor';
 import type { Category } from '../types/vault';
 
 interface PendingFile {
   localId: string;
   file: File;
   previewUrl: string;
+  previewFailed?: boolean;
   title: string;
   notes: string;
 }
@@ -37,7 +43,10 @@ export function UploadModal({
   onCreateCategory,
   onConfirmUpload,
 }: UploadModalProps) {
+  const fileInputId = useId();
+  const cameraInputId = useId();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
   const [categoryId, setCategoryId] = useState<string>(defaultCategoryId || '');
   const [newCategoryName, setNewCategoryName] = useState('');
@@ -66,14 +75,14 @@ export function UploadModal({
   if (!isOpen) return null;
 
   const addFiles = (files: File[]) => {
-    const valid = files.filter((f) => f.type.startsWith('image/'));
+    const valid = files.filter((f) => isImageFile(f));
     if (valid.length === 0) {
-      setErrorMsg('Vui lòng chọn tệp hình ảnh hợp lệ (JPG, PNG, WebP, SVG, GIF).');
+      setErrorMsg('Vui lòng chọn tệp hình ảnh hợp lệ (JPG, PNG, WebP, HEIC, SVG, GIF).');
       return;
     }
     setErrorMsg(null);
     const mapped: PendingFile[] = valid.map((file) => ({
-      localId: crypto.randomUUID(),
+      localId: generateId(),
       file,
       previewUrl: URL.createObjectURL(file),
       title: stripFileExtension(file.name) || 'Ảnh mẫu mới',
@@ -118,8 +127,9 @@ export function UploadModal({
       pendingFiles.forEach((pf) => URL.revokeObjectURL(pf.previewUrl));
       setPendingFiles([]);
       onClose();
-    } catch {
-      setErrorMsg('Không thể xử lý một số ảnh. Vui lòng thử lại.');
+    } catch (err) {
+      const detail = err instanceof Error && err.message ? ` (${err.message})` : '';
+      setErrorMsg(`Không thể tải ảnh lên server${detail}. Vui lòng thử lại.`);
     } finally {
       setIsSaving(false);
     }
@@ -127,72 +137,99 @@ export function UploadModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/60 p-4 backdrop-blur-xs"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/60 p-3 backdrop-blur-xs sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="upload-modal-title"
     >
-      <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-950">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
+        <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3.5 sm:px-6 sm:py-4 dark:border-zinc-800">
           <div>
             <h2
               id="upload-modal-title"
-              className="font-display text-lg font-semibold text-zinc-950 dark:text-zinc-50"
+              className="font-display text-base font-semibold text-zinc-950 sm:text-lg dark:text-zinc-50"
             >
-              Thêm ảnh mẫu vào kho cục bộ
+              Thêm ảnh mẫu
             </h2>
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              Dữ liệu được xử lý và lưu trực tiếp trong trình duyệt (IndexedDB), không tải lên máy chủ ngoài.
+              Ảnh được tải lên server để tất cả thiết bị cùng truy cập và đồng bộ.
             </p>
           </div>
           <button
             type="button"
             onClick={onClose}
             aria-label="Đóng hộp thoại thêm ảnh"
-            className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900"
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-5">
-          {/* Dropzone */}
-          <div
-            onDragOver={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              if (e.dataTransfer.files?.length) {
-                addFiles(Array.from(e.dataTransfer.files));
-              }
-            }}
-            onClick={() => fileInputRef.current?.click()}
-            className="flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-zinc-300 bg-zinc-50/60 px-6 py-8 text-center transition-colors hover:border-blue-500 hover:bg-blue-50/40 dark:border-zinc-700 dark:bg-zinc-900/40 dark:hover:border-blue-500 dark:hover:bg-blue-950/20"
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              className="hidden"
-              onChange={(e) => {
-                if (e.target.files?.length) {
-                  addFiles(Array.from(e.target.files));
-                  e.target.value = '';
+        <form onSubmit={handleSubmit} className="flex-1 space-y-4 overflow-y-auto p-4 sm:space-y-5 sm:p-6">
+          {/* Native Label Dropzone + Mobile Camera Option */}
+          <div className="space-y-2.5">
+            <label
+              htmlFor={fileInputId}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (e.dataTransfer.files?.length) {
+                  addFiles(Array.from(e.dataTransfer.files));
                 }
               }}
-            />
-            <ImagePlus className="mb-2.5 h-8 w-8 text-blue-600 dark:text-blue-400" />
-            <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-              Chọn ảnh từ máy tính hoặc kéo thả nhiều ảnh vào đây
-            </p>
-            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-              Hỗ trợ JPG, PNG, WebP, GIF, SVG · Lưu trữ ngoại tuyến và tạo ảnh thu gọn tự động
-            </p>
+              className="flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-zinc-300 bg-zinc-50/60 px-5 py-7 text-center transition-colors hover:border-blue-500 hover:bg-blue-50/40 sm:px-6 sm:py-8 dark:border-zinc-700 dark:bg-zinc-900/40 dark:hover:border-blue-500 dark:hover:bg-blue-950/20"
+            >
+              <input
+                id={fileInputId}
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="sr-only"
+                onChange={(e) => {
+                  if (e.target.files?.length) {
+                    addFiles(Array.from(e.target.files));
+                    e.target.value = '';
+                  }
+                }}
+              />
+              <ImagePlus className="mb-2.5 h-8 w-8 text-blue-600 dark:text-blue-400" />
+              <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                Chọn ảnh từ thiết bị hoặc kéo thả nhiều ảnh vào đây
+              </p>
+              <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                Hỗ trợ JPG, PNG, WebP, HEIC, GIF, SVG · Đồng bộ tức thì qua server
+              </p>
+            </label>
+
+            <div className="hidden [@media(pointer:coarse)]:flex">
+              <label
+                htmlFor={cameraInputId}
+                className="inline-flex h-10 w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-zinc-300 bg-white px-4 text-xs font-medium text-zinc-800 transition-colors active:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              >
+                <Camera className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                <span>Chụp ảnh trực tiếp bằng camera</span>
+                <input
+                  id={cameraInputId}
+                  ref={cameraInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="sr-only"
+                  onChange={(e) => {
+                    if (e.target.files?.length) {
+                      addFiles(Array.from(e.target.files));
+                      e.target.value = '';
+                    }
+                  }}
+                />
+              </label>
+            </div>
           </div>
 
           {errorMsg && (
@@ -258,11 +295,24 @@ export function UploadModal({
               <div className="divide-y divide-zinc-200 rounded-xl border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
                 {pendingFiles.map((pf) => (
                   <div key={pf.localId} className="flex items-start gap-3.5 p-3">
-                    <img
-                      src={pf.previewUrl}
-                      alt={pf.title}
-                      className="h-16 w-20 shrink-0 rounded-lg border border-zinc-200 object-cover dark:border-zinc-800"
-                    />
+                    {pf.previewFailed ? (
+                      <div className="flex h-16 w-20 shrink-0 items-center justify-center rounded-lg border border-zinc-200 bg-zinc-100 text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900">
+                        <ImageIcon className="h-5 w-5" />
+                      </div>
+                    ) : (
+                      <img
+                        src={pf.previewUrl}
+                        alt={pf.title}
+                        onError={() =>
+                          setPendingFiles((prev) =>
+                            prev.map((x) =>
+                              x.localId === pf.localId ? { ...x, previewFailed: true } : x
+                            )
+                          )
+                        }
+                        className="h-16 w-20 shrink-0 rounded-lg border border-zinc-200 object-cover dark:border-zinc-800"
+                      />
+                    )}
                     <div className="min-w-0 flex-1 space-y-1.5">
                       <input
                         type="text"

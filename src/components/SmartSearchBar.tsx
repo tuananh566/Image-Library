@@ -35,13 +35,14 @@ interface SmartSearchBarProps {
   onToggleBatchMode: () => void;
   onAddClick: () => void;
   addTitle: string;
+  canAdd?: boolean;
+  canBatch?: boolean;
   disableShortcuts?: boolean;
 }
 
 const SYNTAX_HINTS = [
-  { syntax: 'cat:kiến trúc', desc: 'Lọc theo tên danh mục' },
+  { syntax: 'cat:hoa', desc: 'Lọc theo tên danh mục' },
   { syntax: 'ratio:ngang', desc: 'Khổ ngang, dọc hoặc vuông' },
-  { syntax: 'fav:true', desc: 'Chỉ hiển thị ảnh yêu thích' },
   { syntax: '-chữ', desc: 'Loại trừ từ khóa khỏi kết quả' },
 ];
 
@@ -64,6 +65,8 @@ export function SmartSearchBar({
   onToggleBatchMode,
   onAddClick,
   addTitle,
+  canAdd = true,
+  canBatch = true,
   disableShortcuts = false,
 }: SmartSearchBarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -161,6 +164,26 @@ export function SmartSearchBar({
   };
 
   if (!isOpen) {
+    if (!canAdd) {
+      return (
+        <div className="absolute bottom-6 right-6 z-30 inline-flex h-12 w-12 items-center justify-center rounded-full border border-zinc-200/80 bg-white/75 p-1 shadow-xl backdrop-blur-xl dark:border-zinc-700/75 dark:bg-zinc-900/75">
+          <button
+            type="button"
+            onClick={onOpen}
+            title="Tìm kiếm & bộ lọc (/)"
+            aria-label="Mở thanh tìm kiếm và bộ lọc"
+            className={`inline-flex h-10 w-10 items-center justify-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 ${
+              hasActiveControls
+                ? 'bg-blue-600 text-white hover:bg-blue-700'
+                : 'text-zinc-700 hover:bg-zinc-950/5 hover:text-zinc-950 dark:text-zinc-200 dark:hover:bg-white/10 dark:hover:text-white'
+            }`}
+          >
+            <Search className="h-5 w-5" />
+          </button>
+        </div>
+      );
+    }
+
     return (
       <div className="absolute bottom-6 right-6 z-30 inline-flex h-12 items-center rounded-full border border-zinc-200/80 bg-white/75 p-1 shadow-xl backdrop-blur-xl dark:border-zinc-700/75 dark:bg-zinc-900/75">
         <button
@@ -364,18 +387,20 @@ export function SmartSearchBar({
             </div>
 
             {/* Batch Selection Toggle */}
-            <button
-              type="button"
-              onClick={onToggleBatchMode}
-              className={`inline-flex h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-medium whitespace-nowrap shrink-0 transition-colors ${
-                isBatchMode
-                  ? 'border-blue-600 bg-blue-600 text-white dark:border-blue-500 dark:bg-blue-600 dark:text-white'
-                  : 'border-zinc-200/80 bg-white/75 text-zinc-800 hover:bg-white dark:border-zinc-700/75 dark:bg-zinc-950/65 dark:text-zinc-200 dark:hover:bg-zinc-800'
-              }`}
-            >
-              <CheckSquare className="h-3.5 w-3.5" />
-              <span>Chọn nhiều</span>
-            </button>
+            {canBatch && (
+              <button
+                type="button"
+                onClick={onToggleBatchMode}
+                className={`inline-flex h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-medium whitespace-nowrap shrink-0 transition-colors ${
+                  isBatchMode
+                    ? 'border-blue-600 bg-blue-600 text-white dark:border-blue-500 dark:bg-blue-600 dark:text-white'
+                    : 'border-zinc-200/80 bg-white/75 text-zinc-800 hover:bg-white dark:border-zinc-700/75 dark:bg-zinc-950/65 dark:text-zinc-200 dark:hover:bg-zinc-800'
+                }`}
+              >
+                <CheckSquare className="h-3.5 w-3.5" />
+                <span>Chọn nhiều</span>
+              </button>
+            )}
           </div>
 
           {/* Close Floating Search Bar */}

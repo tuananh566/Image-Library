@@ -5,6 +5,8 @@ import { BatchActionBar } from './components/BatchActionBar';
 import { CategoriesView } from './components/CategoriesView';
 import { GalleryGrid } from './components/GalleryGrid';
 import { ImageInspectorModal } from './components/ImageInspectorModal';
+import { OrderModal } from './components/OrderModal';
+import { OrdersView } from './components/OrdersView';
 import { SettingsModal } from './components/SettingsModal';
 import { DEFAULT_SIDEBAR_STEP, Sidebar } from './components/Sidebar';
 import { SmartSearchBar, type SearchSortOption } from './components/SmartSearchBar';
@@ -14,26 +16,36 @@ import {
   clearAllVaultData as clearLocalIndexedDbData,
   type VaultBackupBundle,
 } from './lib/db';
-import { processImageBlob } from './lib/imageProcessor';
+import {
+  generateId,
+  inferImageMimeType,
+  isImageFile,
+  processImageBlob,
+} from './lib/imageProcessor';
 import {
   batchUpdateServerImages,
   clearServerVault,
+  createServerOrder,
   deleteServerCategory,
   deleteServerImages,
+  deleteServerOrder,
   exportServerBackup,
   fetchServerVault,
   getPendingLocalSyncCount,
   importServerBackup,
+  saveFullServerOrder,
   saveServerCategory,
   seedServerSampleVault,
   syncLocalIndexedDbToServer,
   updateServerImageMetadata,
+  updateServerOrder,
   uploadServerImage,
 } from './lib/serverVault';
 import { filterAndScoreImages } from './lib/smartSearch';
 import type {
   AppTab,
   Category,
+  OrderRecord,
   SearchFilterState,
   StorageStats,
   VaultImageRecord,
@@ -74,14 +86,15 @@ const VIEW_TRANSITION_VARIANTS = {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>('library');
-  const [isDark, setIsDark] = useState<boolean>(() => {
+  const [isAdmin, setIsAdmin] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
-    return localStorage.getItem('khoanh_theme') === 'dark';
+    return localStorage.getItem('khoanh_admin_auth') === '1';
   });
 
   const [isLoading, setIsLoading] = useState(true);
   const [categories, setCategories] = useState<Category[]>([]);
   const [images, setImages] = useState<VaultImageView[]>([]);
+  const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [pendingLocalSync, setPendingLocalSync] = useState<{
     categories: number;
     images: number;
@@ -102,6 +115,9 @@ export default function App() {
   const [sidebarWidthStep, setSidebarWidthStep] = useState(DEFAULT_SIDEBAR_STEP);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
+  const [orderPresetImage, setOrderPresetImage] = useState<VaultImageView | null>(null);
+  const [editingOrder, setEditingOrder] = useState<OrderRecord | null>(null);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [droppedFiles, setDroppedFiles] = useState<File[]>([]);
   const [isDraggingGlobal, setIsDraggingGlobal] = useState(false);
@@ -148,7 +164,6 @@ export default function App() {
   const isViewingSpecificCategory =
     activeTab === 'library' &&
     filters.categoryId !== 'all' &&
-    filters.categoryId !== 'favorites' &&
     filters.categoryId !== 'uncategorized';
 
   const canGoBack = isViewingSpecificCategory;
@@ -189,20 +204,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const root = document.documentElement;
-    if (isDark) {
-      root.classList.add('dark');
-      localStorage.setItem('khoanh_theme', 'dark');
-    } else {
-      root.classList.remove('dark');
-      localStorage.setItem('khoanh_theme', 'light');
-    }
-  }, [isDark]);
+    document.documentElement.classList.add('dark');
+  }, []);
 
   const reloadVault = useCallback(async () => {
     const vault = await fetchServerVault();
     setCategories(vault.categories);
     setImages(vault.images);
+    setOrders(vault.orders || []);
     const pending = await getPendingLocalSyncCount(
       new Set(vault.categories.map((c) => c.id)),
       new Set(vault.images.map((i) => i.id))
@@ -255,8 +264,9 @@ export default function App() {
     };
   }, [reloadVault]);
 
-  // Global clipboard paste support for images
+  // Global clipboard paste support for images (Admin only)
   useEffect(() => {
+    if (!isAdmin) return;
     const handlePaste = (e: ClipboardEvent) => {
       const target = e.target as HTMLElement | null;
       if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') return;
@@ -278,17 +288,15 @@ export default function App() {
     };
     window.addEventListener('paste', handlePaste);
     return () => window.removeEventListener('paste', handlePaste);
-  }, []);
+  }, [isAdmin]);
 
   // Computed counts & storage stats
-  const { categoryCounts, favoriteCount, stats } = useMemo(() => {
+  const { categoryCounts, stats } = useMemo(() => {
     const cCounts: Record<string, number> = {};
-    let favCount = 0;
     let totalBytes = 0;
 
     for (const img of images) {
       totalBytes += img.size;
-      if (img.isFavorite) favCount++;
       if (img.categoryId) cCounts[img.categoryId] = (cCounts[img.categoryId] || 0) + 1;
     }
 
@@ -300,7 +308,6 @@ export default function App() {
 
     return {
       categoryCounts: cCounts,
-      favoriteCount: favCount,
       stats: storageStats,
     };
   }, [images, categories.length]);
@@ -324,12 +331,13 @@ export default function App() {
     }));
   };
 
-  // Handlers
+  // Handlers (Admin-guarded mutations)
   const handleQuickCreateCategory = async (name: string): Promise<Category> => {
+    if (!isAdmin) throw new Error('Admin permission required');
     const quickColors = ['#2563EB', '#0284C7', '#16A34A', '#D97706', '#DC2626', '#7C3AED'];
     const randomColor = quickColors[Math.floor(Math.random() * quickColors.length)];
     const newCat: Category = {
-      id: `cat-${crypto.randomUUID().slice(0, 8)}`,
+      id: `cat-${generateId().slice(0, 8)}`,
       name: name.trim(),
       description: '',
       color: randomColor,
@@ -346,8 +354,9 @@ export default function App() {
     description: string;
     color: string;
   }) => {
+    if (!isAdmin) return;
     const newCat: Category = {
-      id: `cat-${crypto.randomUUID().slice(0, 8)}`,
+      id: `cat-${generateId().slice(0, 8)}`,
       name: data.name,
       description: data.description,
       color: data.color,
@@ -366,21 +375,22 @@ export default function App() {
       categoryId: string | null;
     }>
   ) => {
+    if (!isAdmin) throw new Error('Admin permission required');
     const now = Date.now();
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
       const processed = await processImageBlob(item.file);
       const record: VaultImageRecord = {
-        id: crypto.randomUUID(),
+        id: generateId(),
         title: item.title,
-        fileName: item.file.name,
+        fileName: item.file.name || `anh-mau-${now + i}.jpg`,
         notes: item.notes,
         categoryId: item.categoryId,
         tags: [],
         width: processed.width,
         height: processed.height,
         size: item.file.size,
-        mimeType: item.file.type || 'image/jpeg',
+        mimeType: inferImageMimeType(item.file),
         aspectRatioType: processed.aspectRatioType,
         dominantColors: processed.dominantColors,
         colorFamilies: processed.colorFamilies,
@@ -396,13 +406,6 @@ export default function App() {
     await reloadVault();
   };
 
-  const handleToggleFavorite = async (id: string, next: boolean) => {
-    await updateServerImageMetadata(id, { isFavorite: next });
-    setImages((prev) =>
-      prev.map((img) => (img.id === id ? { ...img, isFavorite: next } : img))
-    );
-  };
-
   const handleUpdateImage = async (
     id: string,
     patch: Partial<{
@@ -412,6 +415,7 @@ export default function App() {
       isFavorite: boolean;
     }>
   ) => {
+    if (!isAdmin) return;
     const updated = await updateServerImageMetadata(id, patch);
     setImages((prev) =>
       prev.map((img) => (img.id === id ? updated : img))
@@ -419,12 +423,14 @@ export default function App() {
   };
 
   const handleDeleteImage = async (id: string) => {
+    if (!isAdmin) return;
     await deleteServerImages([id]);
     setInspectedImageId(null);
     await reloadVault();
   };
 
   const handleExportBackup = async () => {
+    if (!isAdmin) return;
     const bundle = await exportServerBackup();
     const json = JSON.stringify(bundle, null, 2);
     const blob = new Blob([json], { type: 'application/json' });
@@ -440,6 +446,7 @@ export default function App() {
   };
 
   const handleImportBackup = async (file: File, mode: 'merge' | 'replace') => {
+    if (!isAdmin) throw new Error('Admin permission required');
     const text = await file.text();
     const parsed = JSON.parse(text) as VaultBackupBundle;
     if (!parsed || !Array.isArray(parsed.images)) {
@@ -451,6 +458,7 @@ export default function App() {
   };
 
   const handleSyncLocalToServer = async () => {
+    if (!isAdmin) throw new Error('Admin permission required');
     setIsSyncingLocal(true);
     try {
       const res = await syncLocalIndexedDbToServer(
@@ -477,34 +485,35 @@ export default function App() {
   );
 
   const headerTitle = useMemo(() => {
-    if (activeTab === 'categories') return 'Danh mục';
+    if (activeTab === 'orders') return 'Đơn hàng';
+    if (activeTab === 'categories') return 'Album';
     if (filters.categoryId === 'all') return 'Tất cả ảnh mẫu';
-    if (filters.categoryId === 'favorites') return 'Yêu thích';
     if (filters.categoryId === 'uncategorized') return 'Chưa phân loại';
-    return categories.find((c) => c.id === filters.categoryId)?.name || 'Danh mục';
+    return categories.find((c) => c.id === filters.categoryId)?.name || 'Album';
   }, [activeTab, filters.categoryId, categories]);
 
   return (
     <div
-      className="flex h-screen flex-col overflow-hidden bg-zinc-50 text-zinc-950 dark:bg-zinc-950 dark:text-zinc-100"
+      className="flex h-screen flex-col overflow-hidden bg-zinc-950 text-zinc-100"
       onDragOver={(e) => {
+        if (!isAdmin) return;
         if (e.dataTransfer.types.includes('Files')) {
           e.preventDefault();
           setIsDraggingGlobal(true);
         }
       }}
       onDragLeave={(e) => {
+        if (!isAdmin) return;
         if (e.currentTarget === e.target || !e.currentTarget.contains(e.relatedTarget as Node)) {
           setIsDraggingGlobal(false);
         }
       }}
       onDrop={(e) => {
+        if (!isAdmin) return;
         e.preventDefault();
         setIsDraggingGlobal(false);
         if (e.dataTransfer.files?.length) {
-          const imgs = Array.from(e.dataTransfer.files).filter((f) =>
-            f.type.startsWith('image/')
-          );
+          const imgs = Array.from(e.dataTransfer.files).filter((f) => isImageFile(f));
           if (imgs.length > 0) {
             setDroppedFiles(imgs);
             setIsUploadOpen(true);
@@ -560,6 +569,11 @@ export default function App() {
         onToggleMobileSidebar={() => setIsMobileSidebarOpen((v) => !v)}
         isDesktopSidebarCollapsed={isDesktopSidebarCollapsed}
         onToggleDesktopSidebar={() => setIsDesktopSidebarCollapsed((v) => !v)}
+        onOpenCreateOrder={() => {
+          setOrderPresetImage(null);
+          setEditingOrder(null);
+          setIsOrderModalOpen(true);
+        }}
       />
 
       <div
@@ -596,15 +610,12 @@ export default function App() {
           }}
           categories={categories}
           totalCount={images.length}
-          favoriteCount={favoriteCount}
+          ordersCount={orders.length}
           categoryCounts={categoryCounts}
           selectedCategoryId={filters.categoryId}
           onSelectCategory={(id) => {
             setViewTransition({ mode: 'fade', originX: '50%', originY: '50%' });
             setFilters((prev) => ({ ...prev, categoryId: id }));
-          }}
-          onCreateCategory={async (name) => {
-            await handleQuickCreateCategory(name);
           }}
           onOpenSettings={() => setIsSettingsOpen(true)}
           isOpenMobile={isMobileSidebarOpen}
@@ -616,7 +627,8 @@ export default function App() {
         />
 
         <main ref={mainRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          {!dismissedSyncBanner &&
+          {isAdmin &&
+            !dismissedSyncBanner &&
             (pendingLocalSync.images > 0 || pendingLocalSync.categories > 0) && (
               <div className="mx-4 mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50/90 px-4 py-2.5 text-xs sm:mx-6 dark:border-blue-900 dark:bg-blue-950/50">
                 <span className="font-medium text-blue-900 dark:text-blue-100">
@@ -655,12 +667,12 @@ export default function App() {
                   style={{
                     transformOrigin: `${viewTransition.originX} ${viewTransition.originY}`,
                   }}
-                  className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-zinc-50 dark:bg-zinc-950"
+                  className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-zinc-950"
                 >
                 {activeTab === 'library' ? (
                   <>
                     <div className="min-h-0 flex-1 overflow-y-auto touch-pan-y p-4 pb-28 sm:p-6 sm:pb-28">
-                      {isBatchMode && (
+                      {isAdmin && isBatchMode && (
                         <BatchActionBar
                           selectedCount={selectedIds.length}
                           categories={categories}
@@ -669,11 +681,13 @@ export default function App() {
                           }
                           onClearSelection={() => setSelectedIds([])}
                           onAssignCategory={async (catId) => {
+                            if (!isAdmin) return;
                             await batchUpdateServerImages(selectedIds, { categoryId: catId });
                             setSelectedIds([]);
                             await reloadVault();
                           }}
                           onDeleteSelected={async () => {
+                            if (!isAdmin) return;
                             await deleteServerImages(selectedIds);
                             setSelectedIds([]);
                             setIsBatchMode(false);
@@ -713,18 +727,19 @@ export default function App() {
                             )
                           }
                           onOpenImage={(id) => setInspectedImageId(id)}
-                          onToggleFavorite={handleToggleFavorite}
                           onOpenUpload={() => {
+                            if (!isAdmin) return;
                             setDroppedFiles([]);
                             setIsUploadOpen(true);
                           }}
+                          canUpload={isAdmin}
                           hasActiveFilters={hasActiveFilters}
                           onClearFilters={clearAllFilters}
                         />
                       )}
                     </div>
 
-                    {/* Bottom-Left Search Button / Bottom Frosted Search Bar */}
+                    {/* Bottom-Right Search / Add Capsule */}
                     <SmartSearchBar
                       isOpen={isSearchOpen}
                       onOpen={() => setIsSearchOpen(true)}
@@ -744,19 +759,53 @@ export default function App() {
                       enableSmartHints
                       isBatchMode={isBatchMode}
                       onToggleBatchMode={() => {
+                        if (!isAdmin) return;
                         setIsBatchMode((v) => !v);
                         setSelectedIds([]);
                       }}
                       onAddClick={() => {
+                        if (!isAdmin) return;
                         setDroppedFiles([]);
                         setIsUploadOpen(true);
                       }}
                       addTitle="Thêm ảnh mẫu"
+                      canAdd={isAdmin}
+                      canBatch={isAdmin}
                       disableShortcuts={Boolean(
-                        isUploadOpen || isSettingsOpen || inspectedImageId
+                        isUploadOpen || isSettingsOpen || isOrderModalOpen || inspectedImageId
                       )}
                     />
                   </>
+                ) : activeTab === 'orders' ? (
+                  <OrdersView
+                    orders={orders}
+                    onOpenCreateOrder={() => {
+                      setOrderPresetImage(null);
+                      setEditingOrder(null);
+                      setIsOrderModalOpen(true);
+                    }}
+                    onEditOrder={(order) => {
+                      setOrderPresetImage(null);
+                      setEditingOrder(order);
+                      setIsOrderModalOpen(true);
+                    }}
+                    onToggleOrderReady={async (order) => {
+                      await updateServerOrder(order.id, {
+                        isReady: !order.isReady,
+                      });
+                      await reloadVault();
+                    }}
+                    onMarkOrderReceived={async (order) => {
+                      await updateServerOrder(order.id, {
+                        isReceived: true,
+                      });
+                      await reloadVault();
+                    }}
+                    onDeleteOrder={async (orderId) => {
+                      await deleteServerOrder(orderId);
+                      await reloadVault();
+                    }}
+                  />
                 ) : (
                   <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                     <CategoriesView
@@ -765,13 +814,16 @@ export default function App() {
                       isSearchOpen={isSearchOpen}
                       onOpenSearch={() => setIsSearchOpen(true)}
                       onCloseSearch={() => setIsSearchOpen(false)}
-                      disableShortcuts={Boolean(isUploadOpen || isSettingsOpen)}
+                      disableShortcuts={Boolean(isUploadOpen || isSettingsOpen || isOrderModalOpen)}
+                      canManage={isAdmin}
                       onCreateCategory={handleFullCreateCategory}
                       onUpdateCategory={async (cat) => {
+                        if (!isAdmin) return;
                         await saveServerCategory(cat);
                         await reloadVault();
                       }}
                       onDeleteCategory={async (id) => {
+                        if (!isAdmin) return;
                         await deleteServerCategory(id);
                         if (filters.categoryId === id) {
                           setFilters((prev) => ({ ...prev, categoryId: 'all' }));
@@ -779,6 +831,7 @@ export default function App() {
                         await reloadVault();
                       }}
                       onDeleteCategories={async (ids) => {
+                        if (!isAdmin) return;
                         for (const id of ids) {
                           await deleteServerCategory(id);
                         }
@@ -819,16 +872,33 @@ export default function App() {
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
-        isDark={isDark}
-        onSetTheme={setIsDark}
+        isAdmin={isAdmin}
+        onAuthenticateAdmin={(password) => {
+          if (password.trim() === '123456') {
+            localStorage.setItem('khoanh_admin_auth', '1');
+            setIsAdmin(true);
+            return true;
+          }
+          return false;
+        }}
+        onLogoutAdmin={() => {
+          localStorage.removeItem('khoanh_admin_auth');
+          setIsAdmin(false);
+          setIsUploadOpen(false);
+          setIsBatchMode(false);
+          setSelectedIds([]);
+          setDroppedFiles([]);
+        }}
         stats={stats}
         onExportBackup={handleExportBackup}
         onImportBackup={handleImportBackup}
         onRestoreSampleVault={async () => {
+          if (!isAdmin) return;
           await seedServerSampleVault(true);
           await reloadVault();
         }}
         onClearAllData={async () => {
+          if (!isAdmin) return;
           await clearServerVault();
           clearAllFilters();
           await reloadVault();
@@ -838,13 +908,11 @@ export default function App() {
       />
 
       <UploadModal
-        isOpen={isUploadOpen}
+        isOpen={isAdmin && isUploadOpen}
         initialFiles={droppedFiles}
         categories={categories}
         defaultCategoryId={
-          filters.categoryId !== 'all' &&
-          filters.categoryId !== 'favorites' &&
-          filters.categoryId !== 'uncategorized'
+          filters.categoryId !== 'all' && filters.categoryId !== 'uncategorized'
             ? filters.categoryId
             : null
         }
@@ -877,6 +945,38 @@ export default function App() {
         onUpdate={handleUpdateImage}
         onDelete={handleDeleteImage}
         onCreateCategory={handleQuickCreateCategory}
+        onCreateOrderFromImage={(img) => {
+          setInspectedImageId(null);
+          setEditingOrder(null);
+          setOrderPresetImage(img);
+          setIsOrderModalOpen(true);
+        }}
+        canManage={isAdmin}
+      />
+
+      <OrderModal
+        isOpen={isOrderModalOpen}
+        onClose={() => {
+          setIsOrderModalOpen(false);
+          setOrderPresetImage(null);
+          setEditingOrder(null);
+        }}
+        images={images}
+        categories={categories}
+        presetImage={orderPresetImage}
+        editingOrder={editingOrder}
+        onCreateOrder={async (input) => {
+          await createServerOrder(input);
+          await reloadVault();
+        }}
+        onUpdateOrder={async (orderId, input) => {
+          await saveFullServerOrder(orderId, input);
+          await reloadVault();
+        }}
+        onCreatedSuccess={() => {
+          setViewTransition({ mode: 'fade', originX: '50%', originY: '50%' });
+          setActiveTab('orders');
+        }}
       />
     </div>
   );
