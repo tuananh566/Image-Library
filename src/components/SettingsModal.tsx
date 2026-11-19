@@ -90,6 +90,7 @@ export function SettingsModal({
   const [editingDeviceId, setEditingDeviceId] = useState<string | null>(null);
   const [editingDeviceName, setEditingDeviceName] = useState('');
   const [isRenamingDevice, setIsRenamingDevice] = useState(false);
+  const [isDevicesModalOpen, setIsDevicesModalOpen] = useState(false);
 
   const [githubStatus, setGithubStatus] = useState<GithubUpdateStatusResponse | null>(null);
   const [githubRepoInput, setGithubRepoInput] = useState('');
@@ -215,16 +216,29 @@ export function SettingsModal({
     setAuthError(null);
     setNowMs(Date.now());
     setGithubError(null);
+    setIsDevicesModalOpen(false);
+    setEditingDeviceId(null);
     if (isAdmin) {
       void loadDevices();
       void loadGithubStatus();
     }
+  }, [isOpen, isAdmin, loadDevices, loadGithubStatus]);
+
+  useEffect(() => {
+    if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        if (isDevicesModalOpen) {
+          setIsDevicesModalOpen(false);
+          setEditingDeviceId(null);
+        } else {
+          onClose();
+        }
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, isAdmin, loadDevices, loadGithubStatus, onClose]);
+  }, [isOpen, isDevicesModalOpen, onClose]);
 
   useEffect(() => {
     if (!isOpen || !isAdmin || !adminExpiresAt || !Number.isFinite(adminExpiresAt)) return;
@@ -407,225 +421,130 @@ export function SettingsModal({
               </button>
             </div>
 
-            {currentDevice && (
-              <div className="mt-3.5 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2.5">
-                {editingDeviceId === currentDevice.id && !isAdmin ? (
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      void handleRenameDevice(currentDevice.id);
-                    }}
-                    className="flex w-full items-center gap-2"
-                  >
-                    <input
-                      type="text"
-                      maxLength={80}
-                      autoFocus
-                      value={editingDeviceName}
-                      onChange={(e) => setEditingDeviceName(e.target.value)}
-                      placeholder="VD: iPad Air 4, iPhone 15..."
-                      className="h-8 flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-2.5 text-xs text-zinc-100 focus:border-blue-500 focus:outline-none"
-                    />
-                    <button
-                      type="submit"
-                      disabled={!editingDeviceName.trim() || isRenamingDevice}
-                      className="inline-flex h-8 items-center gap-1 rounded-lg bg-blue-600 px-2.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
-                    >
-                      <Check className="h-3.5 w-3.5" />
-                      <span>Lưu</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingDeviceId(null);
-                        setEditingDeviceName('');
+            {(() => {
+              const activeCurrentDevice =
+                trustedDevices.find(
+                  (d) => d.isCurrent || (currentDevice && d.id === currentDevice.id)
+                ) || currentDevice;
+              if (!activeCurrentDevice) return null;
+              const currentDisplayName =
+                activeCurrentDevice.deviceName || activeCurrentDevice.label;
+              const currentCombined = `${currentDisplayName} ${activeCurrentDevice.systemInfo || ''}`;
+              const isCurrentTablet = /iPad/i.test(currentCombined);
+              const isCurrentPhone =
+                /iPhone|Android/i.test(currentCombined) && !isCurrentTablet;
+              const isEditingCurrent = editingDeviceId === activeCurrentDevice.id;
+
+              return (
+                <div className="mt-3.5 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2.5">
+                  {isEditingCurrent ? (
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        void handleRenameDevice(activeCurrentDevice.id);
                       }}
-                      className="inline-flex h-8 items-center rounded-lg border border-zinc-700 px-2.5 text-xs text-zinc-300 hover:bg-zinc-800"
+                      className="flex w-full flex-wrap items-center gap-2"
                     >
-                      Hủy
-                    </button>
-                  </form>
-                ) : (
-                  <>
-                    <div className="min-w-0 text-xs">
-                      <span className="text-zinc-400">Tên thiết bị hiện tại: </span>
-                      <span className="font-semibold text-zinc-100">
-                        {currentDevice.deviceName || currentDevice.label}
-                      </span>
-                      {currentDevice.systemInfo && (
-                        <span className="ml-1.5 text-zinc-400">
-                          ({currentDevice.systemInfo})
-                        </span>
-                      )}
-                    </div>
-                    {!isAdmin && (
+                      <input
+                        type="text"
+                        maxLength={80}
+                        autoFocus
+                        value={editingDeviceName}
+                        onChange={(e) => setEditingDeviceName(e.target.value)}
+                        placeholder="VD: iPad Air 4, iPhone 15..."
+                        className="h-8 min-w-[160px] flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-2.5 text-xs text-zinc-100 focus:border-blue-500 focus:outline-none"
+                      />
+                      <button
+                        type="submit"
+                        disabled={!editingDeviceName.trim() || isRenamingDevice}
+                        className="inline-flex h-8 items-center gap-1 rounded-lg bg-blue-600 px-2.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+                      >
+                        <Check className="h-3.5 w-3.5" />
+                        <span>Lưu</span>
+                      </button>
                       <button
                         type="button"
                         onClick={() => {
-                          setEditingDeviceId(currentDevice.id);
-                          setEditingDeviceName(currentDevice.deviceName || currentDevice.label);
+                          setEditingDeviceId(null);
+                          setEditingDeviceName('');
                         }}
-                        className="inline-flex items-center gap-1 text-xs font-medium text-blue-400 hover:text-blue-300"
+                        className="inline-flex h-8 items-center rounded-lg border border-zinc-700 px-2.5 text-xs text-zinc-300 hover:bg-zinc-800"
                       >
-                        <Pencil className="h-3 w-3" />
-                        <span>Đổi tên thiết bị</span>
+                        Hủy
                       </button>
-                    )}
-                  </>
-                )}
-              </div>
-            )}
-
-            {isAdmin && (
-              <div className="mt-4 border-t border-zinc-200 pt-4 dark:border-zinc-800">
-                <div className="mb-2.5 flex items-center justify-between">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                    Danh sách thiết bị đã tin cậy ({trustedDevices.length})
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => void loadDevices()}
-                    className="text-xs font-medium text-blue-400 hover:text-blue-300"
-                  >
-                    {devicesLoading ? 'Đang tải...' : 'Làm mới'}
-                  </button>
-                </div>
-
-                {trustedDevices.length === 0 ? (
-                  <p className="text-xs text-zinc-500">Chưa có thiết bị nào được lưu.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {trustedDevices.map((dev) => {
-                      const displayName = dev.deviceName || dev.label;
-                      const combined = `${displayName} ${dev.systemInfo || ''}`;
-                      const isTablet = /iPad/i.test(combined);
-                      const isPhone = /iPhone|Android/i.test(combined) && !isTablet;
-                      const lastSeenText = new Intl.DateTimeFormat('vi-VN', {
-                        dateStyle: 'short',
-                        timeStyle: 'short',
-                      }).format(new Date(dev.lastSeenAt));
-                      const isEditingThis = editingDeviceId === dev.id;
-                      return (
-                        <div
-                          key={dev.id}
-                          className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2.5"
-                        >
-                          <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-zinc-800 text-zinc-300">
-                              {isTablet ? (
-                                <Tablet className="h-4 w-4" />
-                              ) : isPhone ? (
-                                <Smartphone className="h-4 w-4" />
-                              ) : (
-                                <Laptop className="h-4 w-4" />
-                              )}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              {isEditingThis ? (
-                                <form
-                                  onSubmit={(e) => {
-                                    e.preventDefault();
-                                    void handleRenameDevice(dev.id);
-                                  }}
-                                  className="flex flex-wrap items-center gap-1.5"
-                                >
-                                  <input
-                                    type="text"
-                                    maxLength={80}
-                                    autoFocus
-                                    value={editingDeviceName}
-                                    onChange={(e) => setEditingDeviceName(e.target.value)}
-                                    placeholder="VD: iPad Air 4, iPhone 15..."
-                                    className="h-8 min-w-[160px] flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-2.5 text-xs text-zinc-100 focus:border-blue-500 focus:outline-none"
-                                  />
-                                  <button
-                                    type="submit"
-                                    disabled={!editingDeviceName.trim() || isRenamingDevice}
-                                    className="inline-flex h-8 items-center gap-1 rounded-lg bg-blue-600 px-2.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
-                                  >
-                                    <Check className="h-3.5 w-3.5" />
-                                    <span>Lưu</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setEditingDeviceId(null);
-                                      setEditingDeviceName('');
-                                    }}
-                                    className="inline-flex h-8 items-center rounded-lg border border-zinc-700 px-2 text-xs text-zinc-300 hover:bg-zinc-800"
-                                  >
-                                    Hủy
-                                  </button>
-                                </form>
-                              ) : (
-                                <>
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <span className="truncate text-sm font-medium text-zinc-100">
-                                      {displayName}
-                                    </span>
-                                    {dev.isCurrent && (
-                                      <span className="shrink-0 rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300">
-                                        Thiết bị này
-                                      </span>
-                                    )}
-                                  </div>
-                                  <p className="text-xs text-zinc-400">
-                                    {dev.systemInfo && dev.systemInfo !== displayName
-                                      ? `${dev.systemInfo} · `
-                                      : ''}
-                                    Hoạt động gần nhất: {lastSeenText}
-                                  </p>
-                                </>
-                              )}
-                            </div>
-                          </div>
-
-                          {!isEditingThis && (
-                            <div className="flex shrink-0 items-center gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setEditingDeviceId(dev.id);
-                                  setEditingDeviceName(displayName);
-                                }}
-                                title="Đổi tên thiết bị"
-                                className="inline-flex h-8 items-center gap-1 rounded-lg border border-zinc-700 px-2.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-800"
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                                <span className="hidden sm:inline">Đổi tên</span>
-                              </button>
-
-                              <button
-                                type="button"
-                                disabled={revokingId === dev.id}
-                                onClick={async () => {
-                                  setRevokingId(dev.id);
-                                  try {
-                                    const res = await revokeTrustedDevice(dev.id);
-                                    if (res.revokedCurrent) {
-                                      onClose();
-                                    } else {
-                                      setTrustedDevices((prev) =>
-                                        prev.filter((d) => d.id !== dev.id)
-                                      );
-                                    }
-                                  } finally {
-                                    setRevokingId(null);
-                                  }
-                                }}
-                                title="Thu hồi quyền thiết bị này"
-                                className="inline-flex h-8 items-center gap-1 rounded-lg border border-rose-900/70 px-2.5 text-xs font-medium text-rose-300 transition-colors hover:bg-rose-950/50 disabled:opacity-50"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                                <span>Thu hồi</span>
-                              </button>
-                            </div>
+                    </form>
+                  ) : (
+                    <div className="flex flex-wrap items-center justify-between gap-2.5">
+                      <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-zinc-800 text-zinc-300">
+                          {isCurrentTablet ? (
+                            <Tablet className="h-4 w-4" />
+                          ) : isCurrentPhone ? (
+                            <Smartphone className="h-4 w-4" />
+                          ) : (
+                            <Laptop className="h-4 w-4" />
                           )}
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="truncate text-sm font-medium text-zinc-100">
+                              {currentDisplayName}
+                            </span>
+                            <span className="shrink-0 rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300">
+                              Thiết bị hiện tại
+                            </span>
+                          </div>
+                          {activeCurrentDevice.systemInfo &&
+                            activeCurrentDevice.systemInfo !== currentDisplayName && (
+                              <p className="truncate text-xs text-zinc-400">
+                                {activeCurrentDevice.systemInfo}
+                              </p>
+                            )}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingDeviceId(activeCurrentDevice.id);
+                          setEditingDeviceName(currentDisplayName);
+                        }}
+                        className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-zinc-700 px-2.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-800"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                        <span>Đổi tên</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {isAdmin && (
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+                <div>
+                  <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                    Thiết bị đã tin cậy
+                  </span>
+                  <p className="mt-0.5 text-sm font-medium text-zinc-200 tabular-nums">
+                    {devicesLoading && trustedDevices.length === 0
+                      ? 'Đang tải...'
+                      : `${trustedDevices.length} thiết bị đã tin cậy`}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingDeviceId(null);
+                    setIsDevicesModalOpen(true);
+                    void loadDevices();
+                  }}
+                  className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-xs font-medium text-zinc-100 transition-colors hover:bg-zinc-800"
+                >
+                  <Eye className="h-3.5 w-3.5" />
+                  <span>Xem từng thiết bị</span>
+                </button>
               </div>
             )}
           </section>
@@ -921,6 +840,209 @@ export function SettingsModal({
           </div>
         </div>
       </div>
+
+      {/* Detailed Trusted Devices Modal */}
+      {isAdmin && isDevicesModalOpen && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-950/75 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[calc(0.75rem+var(--app-safe-top))] sm:px-4 sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pt-[calc(1rem+var(--app-safe-top))]"
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsDevicesModalOpen(false);
+            setEditingDeviceId(null);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="trusted-devices-modal-title"
+            onClick={(e) => e.stopPropagation()}
+            className="flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950 shadow-2xl sm:max-h-[min(86vh,calc(100dvh-2rem-var(--app-safe-top)))]"
+          >
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-800 px-5 py-4">
+              <div className="min-w-0">
+                <h2
+                  id="trusted-devices-modal-title"
+                  className="font-display text-base font-bold text-zinc-50 tabular-nums"
+                >
+                  Danh sách thiết bị đã tin cậy ({trustedDevices.length})
+                </h2>
+                <p className="mt-0.5 text-xs text-zinc-400">
+                  Xem chi tiết, đổi tên hoặc thu hồi quyền truy cập của từng thiết bị.
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  disabled={devicesLoading}
+                  onClick={() => void loadDevices()}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800 disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${devicesLoading ? 'animate-spin' : ''}`} />
+                  <span>{devicesLoading ? 'Đang tải...' : 'Làm mới'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsDevicesModalOpen(false);
+                    setEditingDeviceId(null);
+                  }}
+                  aria-label="Đóng danh sách thiết bị"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-5">
+              {trustedDevices.length === 0 ? (
+                <p className="py-6 text-center text-sm text-zinc-400">
+                  {devicesLoading ? 'Đang tải danh sách thiết bị...' : 'Chưa có thiết bị nào được lưu.'}
+                </p>
+              ) : (
+                trustedDevices.map((dev) => {
+                  const displayName = dev.deviceName || dev.label;
+                  const combined = `${displayName} ${dev.systemInfo || ''}`;
+                  const isTablet = /iPad/i.test(combined);
+                  const isPhone = /iPhone|Android/i.test(combined) && !isTablet;
+                  const lastSeenText = new Intl.DateTimeFormat('vi-VN', {
+                    dateStyle: 'short',
+                    timeStyle: 'short',
+                  }).format(new Date(dev.lastSeenAt));
+                  const createdText = new Intl.DateTimeFormat('vi-VN', {
+                    dateStyle: 'short',
+                    timeStyle: 'short',
+                  }).format(new Date(dev.createdAt));
+                  const isEditingThis = editingDeviceId === dev.id;
+
+                  return (
+                    <div
+                      key={dev.id}
+                      className="flex flex-col justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-900/50 px-3.5 py-3 sm:flex-row sm:items-center"
+                    >
+                      <div className="flex min-w-0 flex-1 items-center gap-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-zinc-800 text-zinc-300">
+                          {isTablet ? (
+                            <Tablet className="h-4 w-4" />
+                          ) : isPhone ? (
+                            <Smartphone className="h-4 w-4" />
+                          ) : (
+                            <Laptop className="h-4 w-4" />
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          {isEditingThis ? (
+                            <form
+                              onSubmit={(e) => {
+                                e.preventDefault();
+                                void handleRenameDevice(dev.id);
+                              }}
+                              className="flex flex-wrap items-center gap-1.5"
+                            >
+                              <input
+                                type="text"
+                                maxLength={80}
+                                autoFocus
+                                value={editingDeviceName}
+                                onChange={(e) => setEditingDeviceName(e.target.value)}
+                                placeholder="VD: iPad Air 4, iPhone 15..."
+                                className="h-8 min-w-[160px] flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-2.5 text-xs text-zinc-100 focus:border-blue-500 focus:outline-none"
+                              />
+                              <button
+                                type="submit"
+                                disabled={!editingDeviceName.trim() || isRenamingDevice}
+                                className="inline-flex h-8 items-center gap-1 rounded-lg bg-blue-600 px-2.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+                              >
+                                <Check className="h-3.5 w-3.5" />
+                                <span>Lưu</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingDeviceId(null);
+                                  setEditingDeviceName('');
+                                }}
+                                className="inline-flex h-8 items-center rounded-lg border border-zinc-700 px-2 text-xs text-zinc-300 hover:bg-zinc-800"
+                              >
+                                Hủy
+                              </button>
+                            </form>
+                          ) : (
+                            <>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="truncate text-sm font-medium text-zinc-100">
+                                  {displayName}
+                                </span>
+                                {dev.isCurrent && (
+                                  <span className="shrink-0 rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300">
+                                    Thiết bị này
+                                  </span>
+                                )}
+                              </div>
+                              <p className="mt-0.5 text-xs text-zinc-400">
+                                {dev.systemInfo && dev.systemInfo !== displayName
+                                  ? `${dev.systemInfo} · `
+                                  : ''}
+                                Hoạt động gần nhất: {lastSeenText}
+                              </p>
+                              <p className="mt-0.5 text-[11px] text-zinc-500">
+                                Tin cậy từ: {createdText}
+                              </p>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      {!isEditingThis && (
+                        <div className="flex shrink-0 items-center justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingDeviceId(dev.id);
+                              setEditingDeviceName(displayName);
+                            }}
+                            title="Đổi tên thiết bị"
+                            className="inline-flex h-8 items-center gap-1 rounded-lg border border-zinc-700 px-2.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-800"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                            <span>Đổi tên</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={revokingId === dev.id}
+                            onClick={async () => {
+                              setRevokingId(dev.id);
+                              try {
+                                const res = await revokeTrustedDevice(dev.id);
+                                if (res.revokedCurrent) {
+                                  setIsDevicesModalOpen(false);
+                                  onClose();
+                                } else {
+                                  setTrustedDevices((prev) =>
+                                    prev.filter((d) => d.id !== dev.id)
+                                  );
+                                }
+                              } finally {
+                                setRevokingId(null);
+                              }
+                            }}
+                            title="Thu hồi quyền thiết bị này"
+                            className="inline-flex h-8 items-center gap-1 rounded-lg border border-rose-900/70 px-2.5 text-xs font-medium text-rose-300 transition-colors hover:bg-rose-950/50 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            <span>Thu hồi</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
