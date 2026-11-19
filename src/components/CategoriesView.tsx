@@ -1,4 +1,18 @@
-import { Camera, Check, ImageIcon, ImagePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import {
+  ArrowUpDown,
+  Camera,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  GripHorizontal,
+  ImageIcon,
+  ImagePlus,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { generateId, isImageFile, stripFileExtension } from '../lib/imageProcessor';
 import type { Category, VaultImageView } from '../types/vault';
@@ -24,6 +38,7 @@ interface CategoriesViewProps {
   onUpdateCategory: (category: Category) => Promise<void>;
   onDeleteCategory: (id: string) => Promise<void>;
   onDeleteCategories?: (ids: string[]) => Promise<void>;
+  onReorderCategories?: (orderedIds: string[]) => Promise<void>;
   onOpenCategoryInLibrary: (categoryId: string, sourceRect?: DOMRect) => void;
   canManage?: boolean;
   showOrdersMobile: boolean;
@@ -56,6 +71,7 @@ export function CategoriesView({
   onUpdateCategory,
   onDeleteCategory,
   onDeleteCategories,
+  onReorderCategories,
   onOpenCategoryInLibrary,
   canManage = true,
   showOrdersMobile,
@@ -81,6 +97,7 @@ export function CategoriesView({
   const [editName, setEditName] = useState('');
   const [editDesc, setEditDesc] = useState('');
   const [editColor, setEditColor] = useState('');
+  const [editOrderIndex, setEditOrderIndex] = useState(0);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
 
@@ -88,6 +105,12 @@ export function CategoriesView({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [confirmBatchDelete, setConfirmBatchDelete] = useState(false);
   const [isBatchDeleting, setIsBatchDeleting] = useState(false);
+
+  const [isReorderMode, setIsReorderMode] = useState(false);
+  const [isReordering, setIsReordering] = useState(false);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dragOrderIds, setDragOrderIds] = useState<string[] | null>(null);
+  const dragStateRef = useRef<{ draggingId: string; currentIds: string[] } | null>(null);
 
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pressOriginRef = useRef<{ x: number; y: number; id: string } | null>(null);
@@ -123,12 +146,19 @@ export function CategoriesView({
       setIsBatchMode(false);
       setSelectedIds([]);
       setConfirmBatchDelete(false);
+      setIsReorderMode(false);
+      setDraggingId(null);
+      setDragOrderIds(null);
+      dragStateRef.current = null;
     }
   }, [canManage]);
 
   useEffect(() => {
     const validIds = new Set(categories.map((c) => c.id));
     setSelectedIds((prev) => prev.filter((id) => validIds.has(id)));
+    if (categories.length <= 1) {
+      setIsReorderMode(false);
+    }
   }, [categories]);
 
   useEffect(() => {
@@ -177,9 +207,19 @@ export function CategoriesView({
   }, [images, selectedLibraryIds]);
 
   const orderedCategories = useMemo(
-    () => [...categories].sort((a, b) => a.order - b.order),
+    () => [...categories].sort((a, b) => a.order - b.order || a.createdAt - b.createdAt),
     [categories]
   );
+
+  const displayedCategories = useMemo(() => {
+    if (!dragOrderIds) return orderedCategories;
+    const byId = new Map(orderedCategories.map((c) => [c.id, c]));
+    const mapped = dragOrderIds
+      .map((id) => byId.get(id))
+      .filter((c): c is Category => Boolean(c));
+    const used = new Set(mapped.map((c) => c.id));
+    return [...mapped, ...orderedCategories.filter((c) => !used.has(c.id))];
+  }, [orderedCategories, dragOrderIds]);
 
   const resetCreateDraft = () => {
     pendingFilesRef.current.forEach((pf) => URL.revokeObjectURL(pf.previewUrl));
@@ -258,12 +298,89 @@ export function CategoriesView({
     }
   };
 
+  const commitReorder = async (nextIds: string[]) => {
+    if (!canManage || !onReorderCategories || nextIds.length === 0) return;
+    setIsReordering(true);
+    try {
+      await onReorderCategories(nextIds);
+    } finally {
+      setIsReordering(false);
+    }
+  };
+
+  const moveCategoryByOffset = async (catId: string, delta: -1 | 1) => {
+    if (!canManage || !onReorderCategories || isReordering) return;
+    const ids = orderedCategories.map((c) => c.id);
+    const currentIndex = ids.indexOf(catId);
+    if (currentIndex === -1) return;
+    const targetIndex = currentIndex + delta;
+    if (targetIndex < 0 || targetIndex >= ids.length) return;
+    const nextIds = [...ids];
+    const [moved] = nextIds.splice(currentIndex, 1);
+    nextIds.splice(targetIndex, 0, moved);
+    await commitReorder(nextIds);
+  };
+
+  const startDragReorder = (e: React.PointerEvent, catId: string) => {
+    if (!canManage || !onReorderCategories || isReordering) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const initialIds = orderedCategories.map((c) => c.id);
+    dragStateRef.current = { draggingId: catId, currentIds: initialIds };
+    setDraggingId(catId);
+    setDragOrderIds(initialIds);
+
+    const handleMove = (moveEvent: PointerEvent) => {
+      const state = dragStateRef.current;
+      if (!state) return;
+      const el = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY);
+      const targetCard = el?.closest('[data-category-card]') as HTMLElement | null;
+      const overId = targetCard?.getAttribute('data-category-card');
+      if (!overId || overId === state.draggingId) return;
+
+      const fromIdx = state.currentIds.indexOf(state.draggingId);
+      const toIdx = state.currentIds.indexOf(overId);
+      if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return;
+
+      const nextIds = [...state.currentIds];
+      const [moved] = nextIds.splice(fromIdx, 1);
+      nextIds.splice(toIdx, 0, moved);
+      state.currentIds = nextIds;
+      setDragOrderIds(nextIds);
+    };
+
+    const handleEnd = () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleEnd);
+      window.removeEventListener('pointercancel', handleEnd);
+
+      const finalState = dragStateRef.current;
+      dragStateRef.current = null;
+      setDraggingId(null);
+      setDragOrderIds(null);
+
+      if (!finalState) return;
+      const changed = finalState.currentIds.some((id, idx) => id !== initialIds[idx]);
+      if (changed) {
+        void commitReorder(finalState.currentIds);
+      }
+    };
+
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleEnd);
+    window.addEventListener('pointercancel', handleEnd);
+  };
+
   const openEditModal = (cat: Category) => {
     if (!canManage) return;
     setEditingCategory(cat);
     setEditName(cat.name);
     setEditDesc(cat.description);
     setEditColor(cat.color || PRESET_COLORS[0]);
+    const idx = orderedCategories.findIndex((c) => c.id === cat.id);
+    setEditOrderIndex(idx >= 0 ? idx : 0);
     setConfirmDelete(false);
   };
 
@@ -278,6 +395,17 @@ export function CategoriesView({
         description: editDesc.trim(),
         color: editColor,
       });
+      if (onReorderCategories && orderedCategories.length > 1) {
+        const currentIds = orderedCategories.map((c) => c.id);
+        const currentIdx = currentIds.indexOf(editingCategory.id);
+        const targetIdx = Math.max(0, Math.min(currentIds.length - 1, editOrderIndex));
+        if (currentIdx !== -1 && targetIdx !== currentIdx) {
+          const nextIds = [...currentIds];
+          const [moved] = nextIds.splice(currentIdx, 1);
+          nextIds.splice(targetIdx, 0, moved);
+          await onReorderCategories(nextIds);
+        }
+      }
       setEditingCategory(null);
     } finally {
       setIsSavingEdit(false);
@@ -304,7 +432,7 @@ export function CategoriesView({
   };
 
   const handleAlbumPointerDown = (e: React.PointerEvent, id: string) => {
-    if (!canManage) return;
+    if (!canManage || isReorderMode) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
 
     clearLongPressTimer();
@@ -354,6 +482,45 @@ export function CategoriesView({
     <div className="relative flex h-full min-h-0 flex-col">
       {/* Scrollable Category Area */}
       <div className="min-h-0 flex-1 overflow-y-auto touch-pan-y p-1.5 pb-28 sm:p-2.5 sm:pb-28">
+        {canManage && onReorderCategories && orderedCategories.length > 1 && !isBatchMode && (
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            {isReorderMode ? (
+              <div className="flex w-full flex-wrap items-center justify-between gap-2 rounded-xl border border-blue-900/80 bg-blue-950/40 px-3 py-2 sm:px-3.5">
+                <div className="flex min-w-0 items-center gap-2 text-xs font-medium text-blue-200">
+                  <ArrowUpDown className="h-4 w-4 shrink-0 text-blue-400" />
+                  <span className="truncate">
+                    Kéo nút giữ hoặc bấm ◀ ▶ để đổi vị trí album
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsReorderMode(false)}
+                  className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white transition-colors hover:bg-blue-500"
+                >
+                  <Check className="h-3.5 w-3.5" />
+                  <span>Xong</span>
+                </button>
+              </div>
+            ) : (
+              <div className="flex w-full items-center justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsBatchMode(false);
+                    setSelectedIds([]);
+                    setConfirmBatchDelete(false);
+                    setIsReorderMode(true);
+                  }}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-900/90 px-3 text-xs font-semibold text-zinc-200 transition-colors hover:border-zinc-700 hover:bg-zinc-800"
+                >
+                  <ArrowUpDown className="h-3.5 w-3.5 text-zinc-400" />
+                  <span>Sắp xếp album</span>
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {canManage && isBatchMode && (
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-900/80 bg-blue-950/40 px-3.5 py-2.5 sm:px-4">
             <div className="flex flex-wrap items-center gap-3">
@@ -430,7 +597,7 @@ export function CategoriesView({
           </div>
         )}
 
-        {orderedCategories.length === 0 ? (
+        {displayedCategories.length === 0 ? (
           <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-6 py-12 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
             {canManage
               ? 'Bạn chưa tạo danh mục nào. Nhấn nút dấu + ở góc dưới bên phải để tạo danh mục mới.'
@@ -438,18 +605,19 @@ export function CategoriesView({
           </div>
         ) : (
           <div className={`grid ${gridColsClass} gap-1.5 sm:gap-2.5`}>
-            {orderedCategories.map((cat) => {
+            {displayedCategories.map((cat, idx) => {
               const catImages = imagesByCategory.get(cat.id) || [];
               const previewImages = catImages.slice(0, 4);
               const remainingCount = Math.max(0, catImages.length - 4);
               const isSelected = isBatchMode && selectedIds.includes(cat.id);
+              const isDraggingThis = draggingId === cat.id;
 
               return (
                 <article
                   key={cat.id}
                   data-category-card={cat.id}
-                  role="button"
-                  tabIndex={0}
+                  role={isReorderMode ? undefined : 'button'}
+                  tabIndex={isReorderMode ? -1 : 0}
                   onPointerDown={(e) => handleAlbumPointerDown(e, cat.id)}
                   onPointerMove={handleAlbumPointerMove}
                   onPointerUp={clearLongPressTimer}
@@ -459,6 +627,7 @@ export function CategoriesView({
                     if (canManage) e.preventDefault();
                   }}
                   onClick={(e) => {
+                    if (isReorderMode) return;
                     if (suppressNextClickIdRef.current === cat.id) {
                       suppressNextClickIdRef.current = null;
                       return;
@@ -470,6 +639,7 @@ export function CategoriesView({
                     onOpenCategoryInLibrary(cat.id, e.currentTarget.getBoundingClientRect());
                   }}
                   onKeyDown={(e) => {
+                    if (isReorderMode) return;
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
                       if (canManage && isBatchMode) {
@@ -479,12 +649,20 @@ export function CategoriesView({
                       }
                     }
                   }}
-                  className={`group relative aspect-[4/3] w-full cursor-pointer overflow-hidden rounded-lg border bg-zinc-100 transition-[transform,border-color,box-shadow] duration-150 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-blue-600 dark:bg-zinc-900 ${
+                  className={`group relative aspect-[4/3] w-full overflow-hidden rounded-lg border bg-zinc-100 transition-[transform,border-color,box-shadow,opacity] duration-150 focus-visible:outline-2 focus-visible:outline-blue-600 dark:bg-zinc-900 ${
+                    isReorderMode
+                      ? 'cursor-default'
+                      : 'cursor-pointer hover:-translate-y-0.5 hover:shadow-md active:scale-[0.97]'
+                  } ${
                     canManage ? 'select-none [-webkit-touch-callout:none]' : ''
                   } ${
-                    isSelected
-                      ? 'border-blue-500 ring-2 ring-blue-500/40'
-                      : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-800/80 dark:hover:border-zinc-700'
+                    isDraggingThis
+                      ? 'scale-[0.97] border-blue-400 opacity-85 ring-2 ring-blue-500/60'
+                      : isSelected || isReorderMode
+                        ? isSelected
+                          ? 'border-blue-500 ring-2 ring-blue-500/40'
+                          : 'border-blue-800/70'
+                        : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-800/80 dark:hover:border-zinc-700'
                   }`}
                 >
                   {/* Image / Collage Preview */}
@@ -567,9 +745,9 @@ export function CategoriesView({
                     </div>
                   )}
 
-                  {/* Frosted Category Name Overlay inside image */}
-                  <div className="pointer-events-none absolute inset-x-0 bottom-0 p-2 sm:p-2.5">
-                    <span className="inline-block max-w-full truncate rounded-lg bg-black/45 px-2 py-0.5 font-display text-xs font-semibold text-white backdrop-blur-xs sm:px-2.5 sm:py-1 sm:text-sm">
+                  {/* Frosted Bottom Strip Album Name */}
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 border-t border-white/10 bg-zinc-950/55 px-2.5 py-1.5 backdrop-blur-md sm:px-3 sm:py-2">
+                    <span className="font-display block truncate text-xs font-semibold text-white sm:text-sm">
                       {cat.name}
                     </span>
                   </div>
@@ -589,8 +767,54 @@ export function CategoriesView({
                     </div>
                   )}
 
+                  {/* Reorder Mode Controls: Position Badge + Move Left / Drag Handle / Move Right */}
+                  {canManage && isReorderMode && (
+                    <>
+                      <span className="tabular-nums pointer-events-none absolute left-2 top-2 rounded-md bg-black/70 px-2 py-0.5 text-xs font-bold text-white backdrop-blur-xs sm:left-2.5 sm:top-2.5">
+                        #{idx + 1}
+                      </span>
+
+                      <div
+                        className="absolute right-1.5 top-1.5 z-10 flex items-center gap-1 rounded-xl border border-white/15 bg-black/70 p-1 shadow-lg backdrop-blur-xs sm:right-2 sm:top-2"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => void moveCategoryByOffset(cat.id, -1)}
+                          disabled={idx === 0 || isReordering}
+                          aria-label={`Đưa album ${cat.name} lên trước`}
+                          title="Đưa lên trước"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-white transition-colors hover:bg-white/15 disabled:opacity-30 sm:h-9 sm:w-9"
+                        >
+                          <ChevronLeft className="h-4 w-4 sm:h-5 sm:w-5" />
+                        </button>
+
+                        <button
+                          type="button"
+                          onPointerDown={(e) => startDragReorder(e, cat.id)}
+                          aria-label={`Kéo để đổi vị trí album ${cat.name}`}
+                          title="Kéo để đổi vị trí"
+                          className="inline-flex h-8 w-8 touch-none cursor-grab items-center justify-center rounded-lg text-zinc-200 transition-colors hover:bg-white/15 active:cursor-grabbing sm:h-9 sm:w-9"
+                        >
+                          <GripHorizontal className="h-4 w-4 sm:h-5 sm:w-5" />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => void moveCategoryByOffset(cat.id, 1)}
+                          disabled={idx === displayedCategories.length - 1 || isReordering}
+                          aria-label={`Đưa album ${cat.name} xuống sau`}
+                          title="Đưa xuống sau"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-white transition-colors hover:bg-white/15 disabled:opacity-30 sm:h-9 sm:w-9"
+                        >
+                          <ChevronRight className="h-4 w-4 sm:h-5 sm:w-5" />
+                        </button>
+                      </div>
+                    </>
+                  )}
+
                   {/* Frosted Square Edit Button inside image */}
-                  {canManage && !isBatchMode && (
+                  {canManage && !isBatchMode && !isReorderMode && (
                     <button
                       type="button"
                       onPointerDown={(e) => e.stopPropagation()}
@@ -1021,6 +1245,51 @@ export function CategoriesView({
                   ))}
                 </div>
               </div>
+
+              {onReorderCategories && orderedCategories.length > 1 && (
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                    Thứ tự hiển thị
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEditOrderIndex((v) => Math.max(0, v - 1))}
+                      disabled={editOrderIndex <= 0}
+                      aria-label="Đưa lên trước"
+                      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50 disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    <select
+                      value={editOrderIndex}
+                      onChange={(e) => setEditOrderIndex(Number(e.target.value))}
+                      aria-label="Chọn vị trí thứ tự album"
+                      className="tabular-nums h-9 flex-1 rounded-lg border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-blue-600 focus:outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                    >
+                      {orderedCategories.map((c, idx) => (
+                        <option key={c.id} value={idx}>
+                          Vị trí #{idx + 1} / {orderedCategories.length}
+                          {c.id === editingCategory.id ? ' (Hiện tại)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEditOrderIndex((v) =>
+                          Math.min(orderedCategories.length - 1, v + 1)
+                        )
+                      }
+                      disabled={editOrderIndex >= orderedCategories.length - 1}
+                      aria-label="Đưa xuống sau"
+                      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50 disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <div className="flex items-center justify-between gap-2 border-t border-zinc-100 pt-4 dark:border-zinc-900">
                 {confirmDelete ? (

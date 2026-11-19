@@ -89,7 +89,7 @@ const UPDATE_STATE_FILE = path.join(DATA_DIR, 'update-state.json');
 const PRE_UPDATE_BACKUP_DIR = path.join(DATA_DIR, 'pre-update-backups');
 const DEFAULT_GITHUB_REPO = process.env.GITHUB_REPO || 'tuananh566/Image-Library';
 const DEFAULT_GITHUB_BRANCH = process.env.GITHUB_BRANCH || 'main';
-const DEVICE_VERIFY_CODE = process.env.DEVICE_VERIFY_CODE || '0358093866';
+const DEVICE_VERIFY_CODE = process.env.DEVICE_VERIFY_CODE || '123456';
 const DEVICE_TOKEN_COOKIE = 'khoanh_device_token';
 
 interface TrustedDeviceRecord {
@@ -2050,6 +2050,50 @@ async function startServer() {
 
       broadcastVaultUpdated();
       res.json({ ok: true, count: idSet.size });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Reorder categories
+  app.post('/api/categories/reorder', async (req, res, next) => {
+    try {
+      const orderedIds: string[] = Array.isArray(req.body?.orderedIds)
+        ? req.body.orderedIds.map((item: unknown) => String(item))
+        : [];
+      if (orderedIds.length === 0) {
+        res.status(400).json({ error: 'No category IDs provided' });
+        return;
+      }
+
+      const updatedCategories = await withVaultLock(async (vault) => {
+        const rankMap = new Map<string, number>();
+        orderedIds.forEach((id: string, idx: number) => {
+          if (!rankMap.has(id)) {
+            rankMap.set(id, idx);
+          }
+        });
+
+        const existingSorted = [...vault.categories].sort(
+          (a, b) => a.order - b.order || a.createdAt - b.createdAt
+        );
+        let tailOrder = rankMap.size;
+        const nextCategories = existingSorted
+          .map((cat) => ({
+            ...cat,
+            order: rankMap.has(cat.id) ? rankMap.get(cat.id)! : tailOrder++,
+          }))
+          .sort((a, b) => a.order - b.order || a.createdAt - b.createdAt)
+          .map((cat, idx) => ({ ...cat, order: idx }));
+
+        return {
+          nextVault: { ...vault, seeded: true, categories: nextCategories },
+          result: nextCategories,
+        };
+      });
+
+      broadcastVaultUpdated();
+      res.json({ categories: updatedCategories });
     } catch (err) {
       next(err);
     }

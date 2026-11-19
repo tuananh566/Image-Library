@@ -47,6 +47,7 @@ import {
   fetchServerVault,
   getPendingLocalSyncCount,
   importServerBackup,
+  reorderServerCategories,
   saveFullServerOrder,
   saveServerCategory,
   seedServerSampleVault,
@@ -1130,6 +1131,22 @@ export default function App() {
                         if (ids.includes(filters.categoryId)) {
                           setFilters((prev) => ({ ...prev, categoryId: 'all' }));
                         }
+                        await reloadVault();
+                      }}
+                      onReorderCategories={async (orderedIds) => {
+                        if (!isAdmin || orderedIds.length === 0) return;
+                        setCategories((prev) => {
+                          const rankMap = new Map(orderedIds.map((id, idx) => [id, idx]));
+                          let tail = rankMap.size;
+                          return [...prev]
+                            .map((cat) => ({
+                              ...cat,
+                              order: rankMap.has(cat.id) ? rankMap.get(cat.id)! : tail++,
+                            }))
+                            .sort((a, b) => a.order - b.order || a.createdAt - b.createdAt)
+                            .map((cat, idx) => ({ ...cat, order: idx }));
+                        });
+                        await reorderServerCategories(orderedIds);
                         await reloadVault();
                       }}
                       onOpenCategoryInLibrary={(catId, sourceRect) => {

@@ -199,6 +199,16 @@ export async function deleteServerCategories(ids: string[]): Promise<void> {
   });
 }
 
+export async function reorderServerCategories(orderedIds: string[]): Promise<Category[]> {
+  const res = await apiFetch('/api/categories/reorder', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ orderedIds }),
+  });
+  const data = (await res.json()) as { categories?: Category[] };
+  return data.categories || [];
+}
+
 export async function uploadServerImage(record: VaultImageRecord): Promise<VaultImageView> {
   const { blob, thumbnailBlob, ...meta } = record;
   const formData = new FormData();
