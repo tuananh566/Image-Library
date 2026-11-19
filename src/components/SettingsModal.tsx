@@ -249,7 +249,7 @@ export function SettingsModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/60 p-4 backdrop-blur-xs"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/60 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[calc(0.75rem+var(--app-safe-top))] backdrop-blur-xs sm:p-4"
       onClick={onClose}
     >
       <div
@@ -257,7 +257,7 @@ export function SettingsModal({
         aria-modal="true"
         aria-labelledby="settings-modal-title"
         onClick={(e) => e.stopPropagation()}
-        className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
+        className="flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50 shadow-2xl sm:max-h-[90vh] dark:border-zinc-800 dark:bg-zinc-950"
       >
         {/* Header */}
         <div className="flex shrink-0 items-center justify-between border-b border-zinc-200 bg-white px-6 py-4 dark:border-zinc-800 dark:bg-zinc-950">

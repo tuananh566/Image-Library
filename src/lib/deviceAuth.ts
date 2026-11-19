@@ -1,3 +1,5 @@
+import { clearAdminSession } from './adminAuth';
+
 const DEVICE_TOKEN_KEY = 'khoanh_device_token';
 
 export interface TrustedDeviceInfo {
@@ -147,6 +149,7 @@ export function subscribeDeviceUnauthorized(cb: () => void): () => void {
 
 export function notifyDeviceUnauthorized(): void {
   clearStoredDeviceToken();
+  clearAdminSession();
   for (const cb of unauthorizedListeners) {
     cb();
   }
@@ -223,6 +226,7 @@ export async function checkDeviceStatus(): Promise<DeviceStatusResponse> {
   const data = (await res.json()) as DeviceStatusResponse;
   if (!data.trusted) {
     clearStoredDeviceToken();
+    clearAdminSession();
   }
   return {
     ...data,

@@ -137,12 +137,12 @@ export function UploadModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/60 p-3 backdrop-blur-xs sm:p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/60 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[calc(0.75rem+var(--app-safe-top))] backdrop-blur-xs sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="upload-modal-title"
     >
-      <div className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-xl sm:max-h-[92vh] dark:border-zinc-800 dark:bg-zinc-950">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3.5 sm:px-6 sm:py-4 dark:border-zinc-800">
           <div>

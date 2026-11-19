@@ -373,11 +373,23 @@ export default function App() {
       setDetectedSystemSummary(status.systemSummary || '');
       setCurrentDevice(status.device || null);
       setDeviceDenyReason(status.reason);
-      setDeviceGateState(status.trusted ? 'trusted' : 'unverified');
+      if (!status.trusted) {
+        logoutAdmin();
+        setIsSettingsOpen(false);
+        setIsOrderModalOpen(false);
+        setIsUploadOpen(false);
+        setInspectedImageId(null);
+        setCategories([]);
+        setImages([]);
+        setOrders([]);
+        setDeviceGateState('unverified');
+      } else {
+        setDeviceGateState('trusted');
+      }
     } catch {
       setDeviceGateState('unverified');
     }
-  }, []);
+  }, [logoutAdmin]);
 
   useEffect(() => {
     void verifyCurrentDeviceStatus();
@@ -385,6 +397,7 @@ export default function App() {
 
   useEffect(() => {
     return subscribeDeviceUnauthorized(() => {
+      logoutAdmin();
       setIsSettingsOpen(false);
       setIsOrderModalOpen(false);
       setIsUploadOpen(false);
@@ -395,7 +408,7 @@ export default function App() {
       setDeviceGateState('unverified');
       void verifyCurrentDeviceStatus();
     });
-  }, [verifyCurrentDeviceStatus]);
+  }, [logoutAdmin, verifyCurrentDeviceStatus]);
 
   const reloadVault = useCallback(async () => {
     const vault = await fetchServerVault();

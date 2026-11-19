@@ -1,4 +1,5 @@
 import {
+  Calendar,
   Camera,
   Check,
   CheckCircle2,
@@ -12,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { generateId, isImageFile, stripFileExtension } from '../lib/imageProcessor';
+import { formatDateKeyDisplay, getLocalDateKey, shiftDateKey } from '../lib/orderFilters';
 import type { CreateServerOrderInput, UpdateServerOrderInput } from '../lib/serverVault';
 import type { Category, OrderRecord, OrderSampleImage, VaultImageView } from '../types/vault';
 
@@ -38,6 +40,29 @@ function formatVndDigits(rawDigits: string): string {
   const digits = rawDigits.replace(/\D/g, '');
   if (!digits) return '';
   return digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
+
+function splitPickupTime(raw: string): { date: string; clock: string } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { date: '', clock: '' };
+  const match = /^(\d{4}-\d{2}-\d{2})(?:T(\d{2}:\d{2}))?/.exec(trimmed);
+  if (match) {
+    return { date: match[1], clock: match[2] || '' };
+  }
+  const parsed = new Date(trimmed);
+  if (!Number.isNaN(parsed.getTime())) {
+    const hh = String(parsed.getHours()).padStart(2, '0');
+    const mm = String(parsed.getMinutes()).padStart(2, '0');
+    return { date: getLocalDateKey(parsed), clock: `${hh}:${mm}` };
+  }
+  return { date: '', clock: '' };
+}
+
+function combinePickupTime(date: string, clock: string): string {
+  if (!date && !clock) return '';
+  const targetDate = date || getLocalDateKey();
+  const targetClock = clock || '09:00';
+  return `${targetDate}T${targetClock}`;
 }
 
 export function OrderModal({
@@ -271,9 +296,13 @@ export function OrderModal({
   const totalSampleCount =
     selectedLibraryImages.length + keptCustomImages.length + customFiles.length;
 
+  const { date: pickupDate, clock: pickupClock } = splitPickupTime(pickupTime);
+  const todayKey = getLocalDateKey();
+  const tomorrowKey = shiftDateKey(todayKey, 1);
+
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/75 p-4 backdrop-blur-xs"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/75 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[calc(0.75rem+var(--app-safe-top))] backdrop-blur-xs sm:p-4"
       onClick={onClose}
     >
       <div
@@ -281,10 +310,10 @@ export function OrderModal({
         aria-modal="true"
         aria-labelledby="order-modal-title"
         onClick={(e) => e.stopPropagation()}
-        className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950 text-zinc-100 shadow-2xl"
+        className="flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950 text-zinc-100 shadow-2xl sm:max-h-[92vh]"
       >
         {/* Header */}
-        <div className="flex shrink-0 items-center justify-between border-b border-zinc-800 px-6 py-4">
+        <div className="flex shrink-0 items-center justify-between border-b border-zinc-800 px-4 py-3.5 sm:px-6 sm:py-4">
           <div className="flex items-center gap-2.5">
             <ShoppingBag className="h-5 w-5 text-blue-400" />
             <h2
@@ -315,7 +344,7 @@ export function OrderModal({
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
-          <div className="flex-1 space-y-5 overflow-y-auto p-6">
+          <div className="flex-1 space-y-5 overflow-y-auto p-4 sm:p-6">
             {/* Customer Info */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
@@ -376,19 +405,128 @@ export function OrderModal({
             {/* Pickup Time, Price & Deposit */}
             <div className="space-y-4">
               <div className="min-w-0">
-                <label
-                  htmlFor="order-pickup-time"
-                  className="mb-1.5 block text-xs font-semibold text-zinc-300"
-                >
-                  Thời gian lấy
-                </label>
-                <input
-                  id="order-pickup-time"
-                  type="datetime-local"
-                  value={pickupTime}
-                  onChange={(e) => setPickupTime(e.target.value)}
-                  className="tabular-nums h-10 w-full min-w-0 rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:border-blue-500 focus:outline-none"
-                />
+                <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+                  <span className="block text-xs font-semibold text-zinc-300">
+                    Thời gian lấy
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setPickupTime(combinePickupTime(todayKey, pickupClock))
+                      }
+                      className={`rounded-md border px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                        pickupDate === todayKey
+                          ? 'border-blue-500/70 bg-blue-600/20 text-blue-300'
+                          : 'border-zinc-700/80 bg-zinc-900 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
+                      }`}
+                    >
+                      Hôm nay
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setPickupTime(combinePickupTime(tomorrowKey, pickupClock))
+                      }
+                      className={`rounded-md border px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                        pickupDate === tomorrowKey
+                          ? 'border-blue-500/70 bg-blue-600/20 text-blue-300'
+                          : 'border-zinc-700/80 bg-zinc-900 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
+                      }`}
+                    >
+                      Ngày mai
+                    </button>
+                    {pickupTime && (
+                      <button
+                        type="button"
+                        onClick={() => setPickupTime('')}
+                        className="rounded-md px-1.5 py-0.5 text-[11px] font-medium text-zinc-500 transition-colors hover:bg-zinc-900 hover:text-rose-300"
+                      >
+                        Xóa
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div className="relative flex h-10 min-w-0 items-center justify-between gap-2 overflow-hidden rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-sm transition-colors focus-within:border-blue-500 hover:border-zinc-600">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <Calendar className="h-4 w-4 shrink-0 text-zinc-400" />
+                      <span
+                        className={`tabular-nums truncate ${
+                          pickupDate ? 'text-zinc-100' : 'text-zinc-500'
+                        }`}
+                      >
+                        {pickupDate ? formatDateKeyDisplay(pickupDate) : 'Chọn ngày'}
+                      </span>
+                    </span>
+                    <input
+                      id="order-pickup-date"
+                      type="date"
+                      value={pickupDate}
+                      aria-label="Chọn ngày lấy hàng"
+                      onClick={(e) => {
+                        try {
+                          (
+                            e.currentTarget as HTMLInputElement & {
+                              showPicker?: () => void;
+                            }
+                          ).showPicker?.();
+                        } catch {
+                          // Ignore browsers that open native picker automatically
+                        }
+                      }}
+                      onChange={(e) => {
+                        const nextDate = e.target.value;
+                        if (!nextDate) {
+                          setPickupTime('');
+                          return;
+                        }
+                        setPickupTime(combinePickupTime(nextDate, pickupClock));
+                      }}
+                      className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                    />
+                  </div>
+
+                  <div className="relative flex h-10 min-w-0 items-center justify-between gap-2 overflow-hidden rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-sm transition-colors focus-within:border-blue-500 hover:border-zinc-600">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <Clock className="h-4 w-4 shrink-0 text-zinc-400" />
+                      <span
+                        className={`tabular-nums truncate ${
+                          pickupClock ? 'text-zinc-100' : 'text-zinc-500'
+                        }`}
+                      >
+                        {pickupClock || 'Chọn giờ'}
+                      </span>
+                    </span>
+                    <input
+                      id="order-pickup-time"
+                      type="time"
+                      value={pickupClock}
+                      aria-label="Chọn giờ lấy hàng"
+                      onClick={(e) => {
+                        try {
+                          (
+                            e.currentTarget as HTMLInputElement & {
+                              showPicker?: () => void;
+                            }
+                          ).showPicker?.();
+                        } catch {
+                          // Ignore browsers that open native picker automatically
+                        }
+                      }}
+                      onChange={(e) => {
+                        const nextClock = e.target.value;
+                        if (!nextClock && !pickupDate) {
+                          setPickupTime('');
+                          return;
+                        }
+                        setPickupTime(combinePickupTime(pickupDate, nextClock));
+                      }}
+                      className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                    />
+                  </div>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -775,7 +913,7 @@ export function OrderModal({
           </div>
 
           {/* Footer */}
-          <div className="flex shrink-0 items-center justify-end gap-2.5 border-t border-zinc-800 bg-zinc-950 px-6 py-4">
+          <div className="flex shrink-0 items-center justify-end gap-2.5 border-t border-zinc-800 bg-zinc-950 px-4 py-3.5 sm:px-6 sm:py-4">
             <button
               type="button"
               onClick={onClose}
