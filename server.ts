@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import crypto from 'crypto';
 import express from 'express';
 import type { NextFunction, Request, Response } from 'express';
 import fs from 'fs';
@@ -79,6 +80,25 @@ const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const THUMBS_DIR = path.join(DATA_DIR, 'thumbs');
 const ORDER_IMAGES_DIR = path.join(DATA_DIR, 'order-images');
 const VAULT_FILE = path.join(DATA_DIR, 'vault.json');
+const TRUSTED_DEVICES_FILE = path.join(DATA_DIR, 'trusted-devices.json');
+const DEVICE_VERIFY_CODE = process.env.DEVICE_VERIFY_CODE || '0358093866';
+const DEVICE_TOKEN_COOKIE = 'khoanh_device_token';
+
+interface TrustedDeviceRecord {
+  id: string;
+  tokenHash: string;
+  label: string;
+  userAgent: string;
+  fingerprint: string;
+  createdAt: number;
+  lastSeenAt: number;
+  lastIp: string;
+}
+
+interface TrustedDevicesFile {
+  version: number;
+  devices: TrustedDeviceRecord[];
+}
 
 const MIME_EXT_MAP: Record<string, string> = {
   'image/jpeg': '.jpg',
@@ -174,8 +194,8 @@ function withVaultLock<T>(task: (vault: VaultDataFile) => Promise<{ nextVault?: 
 
 const sseClients = new Set<Response>();
 
-function broadcastVaultUpdated(): void {
-  const payload = `data: ${JSON.stringify({ type: 'vault-updated', ts: Date.now() })}\n\n`;
+function broadcastEvent(type: 'vault-updated' | 'devices-updated'): void {
+  const payload = `data: ${JSON.stringify({ type, ts: Date.now() })}\n\n`;
   for (const res of sseClients) {
     try {
       res.write(payload);
@@ -184,6 +204,180 @@ function broadcastVaultUpdated(): void {
     }
   }
 }
+
+function broadcastVaultUpdated(): void {
+  broadcastEvent('vault-updated');
+}
+
+let cachedDevicesByHash = new Map<string, TrustedDeviceRecord>();
+let devicesWriteQueue: Promise<unknown> = Promise.resolve();
+
+function hashDeviceToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+function refreshDevicesCache(devices: TrustedDeviceRecord[]): void {
+  cachedDevicesByHash = new Map(devices.map((d) => [d.tokenHash, d]));
+}
+
+async function readTrustedDevicesFile(): Promise<TrustedDevicesFile> {
+  await fsp.mkdir(DATA_DIR, { recursive: true });
+  if (!fs.existsSync(TRUSTED_DEVICES_FILE)) {
+    const initial: TrustedDevicesFile = { version: 1, devices: [] };
+    await writeTrustedDevicesFile(initial);
+    return initial;
+  }
+  try {
+    const raw = await fsp.readFile(TRUSTED_DEVICES_FILE, 'utf8');
+    const parsed = JSON.parse(raw) as Partial<TrustedDevicesFile>;
+    const devices = Array.isArray(parsed.devices) ? parsed.devices : [];
+    refreshDevicesCache(devices);
+    return { version: 1, devices };
+  } catch {
+    refreshDevicesCache([]);
+    return { version: 1, devices: [] };
+  }
+}
+
+async function writeTrustedDevicesFile(data: TrustedDevicesFile): Promise<void> {
+  const tmpFile = `${TRUSTED_DEVICES_FILE}.${process.pid}.${Date.now()}.tmp`;
+  await fsp.writeFile(tmpFile, JSON.stringify(data, null, 2), 'utf8');
+  await fsp.rename(tmpFile, TRUSTED_DEVICES_FILE);
+  refreshDevicesCache(data.devices);
+}
+
+function withDevicesLock<T>(
+  task: (file: TrustedDevicesFile) => Promise<{ nextFile?: TrustedDevicesFile; result: T }>
+): Promise<T> {
+  const next = devicesWriteQueue.then(async () => {
+    const current = await readTrustedDevicesFile();
+    const { nextFile, result } = await task(current);
+    if (nextFile) {
+      await writeTrustedDevicesFile(nextFile);
+    }
+    return result;
+  });
+  devicesWriteQueue = next.catch(() => {});
+  return next;
+}
+
+function parseCookies(cookieHeader: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!cookieHeader) return out;
+  for (const part of cookieHeader.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx <= 0) continue;
+    const key = part.slice(0, idx).trim();
+    const val = part.slice(idx + 1).trim();
+    try {
+      out[key] = decodeURIComponent(val);
+    } catch {
+      out[key] = val;
+    }
+  }
+  return out;
+}
+
+function extractDeviceToken(req: Request): string {
+  const headerToken = req.header('x-device-token');
+  if (typeof headerToken === 'string' && headerToken.trim()) {
+    return headerToken.trim();
+  }
+  if (typeof req.query?.dt === 'string' && req.query.dt.trim()) {
+    return req.query.dt.trim();
+  }
+  const cookies = parseCookies(req.headers.cookie);
+  return (cookies[DEVICE_TOKEN_COOKIE] || '').trim();
+}
+
+function detectDeviceLabel(userAgent: string, customLabel?: string): string {
+  const trimmedCustom = String(customLabel || '').trim().slice(0, 60);
+  if (trimmedCustom) return trimmedCustom;
+
+  const ua = userAgent || '';
+  let osName = 'Thiết bị';
+  if (/iPhone/i.test(ua)) osName = 'iPhone';
+  else if (/iPad/i.test(ua)) osName = 'iPad';
+  else if (/Android/i.test(ua)) osName = 'Android';
+  else if (/Mac OS X|Macintosh/i.test(ua)) osName = 'Mac';
+  else if (/Windows/i.test(ua)) osName = 'Windows';
+  else if (/Linux/i.test(ua)) osName = 'Linux';
+
+  let browserName = 'Trình duyệt';
+  if (/Edg\//i.test(ua)) browserName = 'Edge';
+  else if (/OPR\/|Opera/i.test(ua)) browserName = 'Opera';
+  else if (/CriOS|Chrome/i.test(ua)) browserName = 'Chrome';
+  else if (/FxiOS|Firefox/i.test(ua)) browserName = 'Firefox';
+  else if (/Safari/i.test(ua)) browserName = 'Safari';
+
+  return `${osName} · ${browserName}`;
+}
+
+function getClientIp(req: Request): string {
+  const forwarded = req.headers['x-forwarded-for'];
+  const first = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+  return String(first || req.socket.remoteAddress || '')
+    .split(',')[0]
+    .trim();
+}
+
+function verifyCodeMatch(input: string): boolean {
+  const expected = Buffer.from(DEVICE_VERIFY_CODE, 'utf8');
+  const actual = Buffer.from(input, 'utf8');
+  if (expected.length !== actual.length) return false;
+  return crypto.timingSafeEqual(expected, actual);
+}
+
+function setDeviceTokenCookie(req: Request, res: Response, token: string): void {
+  const isHttps =
+    req.secure ||
+    String(req.headers['x-forwarded-proto'] || '')
+      .toLowerCase()
+      .includes('https');
+  const parts = [
+    `${DEVICE_TOKEN_COOKIE}=${encodeURIComponent(token)}`,
+    'Path=/',
+    'HttpOnly',
+    `Max-Age=${60 * 60 * 24 * 365}`,
+    isHttps ? 'SameSite=None' : 'SameSite=Lax',
+  ];
+  if (isHttps) parts.push('Secure');
+  res.setHeader('Set-Cookie', parts.join('; '));
+}
+
+function clearDeviceTokenCookie(req: Request, res: Response): void {
+  const isHttps =
+    req.secure ||
+    String(req.headers['x-forwarded-proto'] || '')
+      .toLowerCase()
+      .includes('https');
+  const parts = [
+    `${DEVICE_TOKEN_COOKIE}=`,
+    'Path=/',
+    'HttpOnly',
+    'Max-Age=0',
+    isHttps ? 'SameSite=None' : 'SameSite=Lax',
+  ];
+  if (isHttps) parts.push('Secure');
+  res.setHeader('Set-Cookie', parts.join('; '));
+}
+
+function toPublicDevice(rec: TrustedDeviceRecord, currentDeviceId?: string) {
+  return {
+    id: rec.id,
+    label: rec.label,
+    createdAt: rec.createdAt,
+    lastSeenAt: rec.lastSeenAt,
+    isCurrent: rec.id === currentDeviceId,
+  };
+}
+
+const MAX_VERIFY_ATTEMPTS = 5;
+const VERIFY_LOCKOUT_MS = 5 * 60 * 1000;
+const verifyFailuresByIp = new Map<
+  string,
+  { count: number; resetAt: number; lockedUntil: number }
+>();
 
 function toClientImage(rec: ServerImageRecord) {
   const { storedFile: _sf, storedThumbFile: _stf, ...rest } = rec;
@@ -249,6 +443,7 @@ function base64DataUrlToBuffer(dataUrl: string): { buffer: Buffer; mimeType: str
 
 async function startServer() {
   await ensureStorageReady();
+  await readTrustedDevicesFile();
 
   const app = express();
   const upload = multer({
@@ -261,6 +456,236 @@ async function startServer() {
 
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true });
+  });
+
+  // Familiar device detection & verification endpoints (allowed before device auth)
+  app.post('/api/device/status', express.json({ limit: '64kb' }), async (req, res, next) => {
+    try {
+      const ua = String(req.headers['user-agent'] || '');
+      const body = (req.body || {}) as { deviceLabel?: string; fingerprint?: string };
+      const detectedLabel = detectDeviceLabel(ua, body.deviceLabel);
+      const token = extractDeviceToken(req);
+
+      if (!token) {
+        res.json({
+          trusted: false,
+          detectedLabel,
+          reason: 'new_device',
+        });
+        return;
+      }
+
+      const tokenHash = hashDeviceToken(token);
+      const matched = cachedDevicesByHash.get(tokenHash);
+      if (!matched) {
+        clearDeviceTokenCookie(req, res);
+        res.json({
+          trusted: false,
+          detectedLabel,
+          reason: 'revoked_or_unknown',
+        });
+        return;
+      }
+
+      const now = Date.now();
+      const ip = getClientIp(req);
+      let currentRecord = matched;
+      if (now - matched.lastSeenAt > 30_000 || matched.lastIp !== ip) {
+        currentRecord = await withDevicesLock(async (file) => {
+          const found = file.devices.find((d) => d.id === matched.id);
+          if (!found) return { result: matched };
+          const updated: TrustedDeviceRecord = {
+            ...found,
+            lastSeenAt: now,
+            lastIp: ip,
+            userAgent: ua || found.userAgent,
+          };
+          return {
+            nextFile: {
+              ...file,
+              devices: file.devices.map((d) => (d.id === matched.id ? updated : d)),
+            },
+            result: updated,
+          };
+        });
+      }
+
+      setDeviceTokenCookie(req, res, token);
+      res.json({
+        trusted: true,
+        detectedLabel: currentRecord.label,
+        device: toPublicDevice(currentRecord, currentRecord.id),
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.post('/api/device/verify', express.json({ limit: '64kb' }), async (req, res, next) => {
+    try {
+      const ip = getClientIp(req) || 'unknown';
+      const now = Date.now();
+      const failureState = verifyFailuresByIp.get(ip);
+      if (failureState && failureState.lockedUntil > now) {
+        const minsLeft = Math.max(1, Math.ceil((failureState.lockedUntil - now) / 60_000));
+        res.status(429).json({
+          error: `Tạm khóa do nhập sai ${MAX_VERIFY_ATTEMPTS} lần liên tiếp. Vui lòng thử lại sau ${minsLeft} phút.`,
+        });
+        return;
+      }
+
+      const body = (req.body || {}) as {
+        code?: string;
+        deviceLabel?: string;
+        fingerprint?: string;
+      };
+      const code = String(body.code || '').trim();
+
+      if (!verifyCodeMatch(code)) {
+        const nextCount =
+          failureState && failureState.resetAt > now ? failureState.count + 1 : 1;
+        const isLockedNow = nextCount >= MAX_VERIFY_ATTEMPTS;
+        const lockedUntil = isLockedNow ? now + VERIFY_LOCKOUT_MS : 0;
+        verifyFailuresByIp.set(ip, {
+          count: nextCount,
+          resetAt:
+            failureState && failureState.resetAt > now
+              ? failureState.resetAt
+              : now + VERIFY_LOCKOUT_MS,
+          lockedUntil,
+        });
+
+        if (isLockedNow) {
+          res.status(429).json({
+            error: `Bạn đã nhập sai ${MAX_VERIFY_ATTEMPTS} lần liên tiếp. Tạm khóa trong 5 phút.`,
+          });
+        } else {
+          res.status(401).json({
+            error: `Mã xác nhận không đúng. Còn ${MAX_VERIFY_ATTEMPTS - nextCount} lần thử.`,
+          });
+        }
+        return;
+      }
+
+      verifyFailuresByIp.delete(ip);
+      const ua = String(req.headers['user-agent'] || '');
+      const deviceId = crypto.randomUUID();
+      const rawToken = `${deviceId}.${crypto.randomBytes(24).toString('hex')}`;
+      const tokenHash = hashDeviceToken(rawToken);
+      const label = detectDeviceLabel(ua, body.deviceLabel);
+      const fingerprint = String(body.fingerprint || '').slice(0, 200);
+
+      const newRecord: TrustedDeviceRecord = {
+        id: deviceId,
+        tokenHash,
+        label,
+        userAgent: ua,
+        fingerprint,
+        createdAt: now,
+        lastSeenAt: now,
+        lastIp: ip,
+      };
+
+      await withDevicesLock(async (file) => ({
+        nextFile: {
+          ...file,
+          devices: [newRecord, ...file.devices],
+        },
+        result: newRecord,
+      }));
+
+      setDeviceTokenCookie(req, res, rawToken);
+      broadcastEvent('devices-updated');
+      res.status(201).json({
+        trusted: true,
+        deviceToken: rawToken,
+        device: toPublicDevice(newRecord, newRecord.id),
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.post('/api/device/logout', async (req, res, next) => {
+    try {
+      const token = extractDeviceToken(req);
+      if (token) {
+        const tokenHash = hashDeviceToken(token);
+        await withDevicesLock(async (file) => ({
+          nextFile: {
+            ...file,
+            devices: file.devices.filter((d) => d.tokenHash !== tokenHash),
+          },
+          result: true,
+        }));
+      }
+      clearDeviceTokenCookie(req, res);
+      broadcastEvent('devices-updated');
+      res.json({ ok: true });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Require familiar/verified device for all other /api/* routes
+  app.use('/api', (req, res, next) => {
+    const token = extractDeviceToken(req);
+    if (!token) {
+      res.status(401).json({
+        error: 'DEVICE_NOT_TRUSTED',
+        message: 'Thiết bị mới cần nhập mã xác nhận để truy cập.',
+      });
+      return;
+    }
+
+    const matched = cachedDevicesByHash.get(hashDeviceToken(token));
+    if (!matched) {
+      res.status(401).json({
+        error: 'DEVICE_NOT_TRUSTED',
+        message: 'Thiết bị chưa được xác nhận hoặc đã bị thu hồi quyền.',
+      });
+      return;
+    }
+
+    (req as Request & { trustedDeviceId?: string }).trustedDeviceId = matched.id;
+    next();
+  });
+
+  app.get('/api/devices', async (req, res, next) => {
+    try {
+      const currentDeviceId = (req as Request & { trustedDeviceId?: string }).trustedDeviceId;
+      const file = await readTrustedDevicesFile();
+      const sorted = [...file.devices]
+        .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
+        .map((d) => toPublicDevice(d, currentDeviceId));
+      res.json({
+        currentDeviceId: currentDeviceId || null,
+        devices: sorted,
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.delete('/api/devices/:id', async (req, res, next) => {
+    try {
+      const targetId = req.params.id;
+      const currentDeviceId = (req as Request & { trustedDeviceId?: string }).trustedDeviceId;
+      await withDevicesLock(async (file) => ({
+        nextFile: {
+          ...file,
+          devices: file.devices.filter((d) => d.id !== targetId),
+        },
+        result: true,
+      }));
+      if (targetId === currentDeviceId) {
+        clearDeviceTokenCookie(req, res);
+      }
+      broadcastEvent('devices-updated');
+      res.json({ ok: true, revokedCurrent: targetId === currentDeviceId });
+    } catch (err) {
+      next(err);
+    }
   });
 
   // Server-Sent Events for live cross-device updates

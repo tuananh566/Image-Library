@@ -3,6 +3,7 @@ import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BatchActionBar } from './components/BatchActionBar';
 import { CategoriesView } from './components/CategoriesView';
+import { DeviceVerificationGate } from './components/DeviceVerificationGate';
 import { FloatingOrdersCapsule } from './components/FloatingOrdersCapsule';
 import { GalleryGrid } from './components/GalleryGrid';
 import { ImageInspectorModal } from './components/ImageInspectorModal';
@@ -21,6 +22,11 @@ import {
   clearAllVaultData as clearLocalIndexedDbData,
   type VaultBackupBundle,
 } from './lib/db';
+import {
+  attachDeviceTokenToUrl,
+  checkDeviceStatus,
+  subscribeDeviceUnauthorized,
+} from './lib/deviceAuth';
 import {
   generateId,
   inferImageMimeType,
@@ -90,6 +96,10 @@ export default function App() {
     getAdminExpiresAt()
   );
   const isAdmin = adminExpiresAt !== null;
+
+  const [deviceGateState, setDeviceGateState] = useState<'checking' | 'unverified' | 'trusted'>('checking');
+  const [detectedDeviceLabel, setDetectedDeviceLabel] = useState('');
+  const [deviceDenyReason, setDeviceDenyReason] = useState<string | undefined>(undefined);
 
   const [isLoading, setIsLoading] = useState(true);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -351,6 +361,35 @@ export default function App() {
     };
   }, []);
 
+  const verifyCurrentDeviceStatus = useCallback(async () => {
+    try {
+      const status = await checkDeviceStatus();
+      setDetectedDeviceLabel(status.detectedLabel);
+      setDeviceDenyReason(status.reason);
+      setDeviceGateState(status.trusted ? 'trusted' : 'unverified');
+    } catch {
+      setDeviceGateState('unverified');
+    }
+  }, []);
+
+  useEffect(() => {
+    void verifyCurrentDeviceStatus();
+  }, [verifyCurrentDeviceStatus]);
+
+  useEffect(() => {
+    return subscribeDeviceUnauthorized(() => {
+      setIsSettingsOpen(false);
+      setIsOrderModalOpen(false);
+      setIsUploadOpen(false);
+      setInspectedImageId(null);
+      setCategories([]);
+      setImages([]);
+      setOrders([]);
+      setDeviceGateState('unverified');
+      void verifyCurrentDeviceStatus();
+    });
+  }, [verifyCurrentDeviceStatus]);
+
   const reloadVault = useCallback(async () => {
     const vault = await fetchServerVault();
     setCategories(vault.categories);
@@ -364,11 +403,15 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (deviceGateState !== 'trusted') return;
     let active = true;
+    setIsLoading(true);
     (async () => {
       try {
         await seedServerSampleVault(false);
         if (active) await reloadVault();
+      } catch {
+        // Handled by unauthorized listener if device was revoked
       } finally {
         if (active) setIsLoading(false);
       }
@@ -377,16 +420,19 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [reloadVault]);
+  }, [deviceGateState, reloadVault]);
 
   // Live cross-device sync via Server-Sent Events + window focus refresh
   useEffect(() => {
-    const eventSource = new EventSource('/api/events');
+    if (deviceGateState !== 'trusted') return;
+    const eventSource = new EventSource(attachDeviceTokenToUrl('/api/events'));
     eventSource.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data) as { type?: string };
         if (msg.type === 'vault-updated') {
           void reloadVault();
+        } else if (msg.type === 'devices-updated') {
+          void verifyCurrentDeviceStatus();
         }
       } catch {
         // Ignore malformed SSE message
@@ -395,6 +441,7 @@ export default function App() {
 
     const handleVisibilityOrFocus = () => {
       if (document.visibilityState === 'visible') {
+        void verifyCurrentDeviceStatus();
         void reloadVault();
       }
     };
@@ -406,7 +453,7 @@ export default function App() {
       window.removeEventListener('focus', handleVisibilityOrFocus);
       document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
     };
-  }, [reloadVault]);
+  }, [deviceGateState, reloadVault, verifyCurrentDeviceStatus]);
 
   // Global clipboard paste support for images (Admin only)
   useEffect(() => {
@@ -635,6 +682,32 @@ export default function App() {
     if (filters.categoryId === 'uncategorized') return 'Chưa phân loại';
     return categories.find((c) => c.id === filters.categoryId)?.name || 'Album';
   }, [activeTab, filters.categoryId, categories]);
+
+  if (deviceGateState === 'checking') {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-zinc-950 text-zinc-300">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-7 w-7 animate-spin rounded-full border-2 border-zinc-700 border-t-blue-500" />
+          <p className="text-sm font-medium text-zinc-400">
+            Đang nhận diện thiết bị...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (deviceGateState === 'unverified') {
+    return (
+      <DeviceVerificationGate
+        detectedLabel={detectedDeviceLabel}
+        reason={deviceDenyReason}
+        onVerified={() => {
+          setIsLoading(true);
+          setDeviceGateState('trusted');
+        }}
+      />
+    );
+  }
 
   return (
     <div

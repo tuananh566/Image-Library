@@ -1,5 +1,10 @@
 import type { Category, OrderRecord, VaultImageRecord, VaultImageView } from '../types/vault';
 import { getAllCategories, getAllImages, type VaultBackupBundle } from './db';
+import {
+  attachDeviceTokenToUrl,
+  getDeviceAuthHeaders,
+  notifyDeviceUnauthorized,
+} from './deviceAuth';
 import { processImageBlob } from './imageProcessor';
 
 export interface ServerVaultResponse {
@@ -110,7 +115,30 @@ const SAMPLE_SEED_ITEMS = [
   },
 ];
 
+function hydrateImageUrls(img: VaultImageView): VaultImageView {
+  return {
+    ...img,
+    thumbnailUrl: attachDeviceTokenToUrl(img.thumbnailUrl),
+    ...(img.fullUrl ? { fullUrl: attachDeviceTokenToUrl(img.fullUrl) } : {}),
+  };
+}
+
+function hydrateOrderUrls(order: OrderRecord): OrderRecord {
+  return {
+    ...order,
+    sampleImages: (order.sampleImages || []).map((sample) => ({
+      ...sample,
+      thumbnailUrl: attachDeviceTokenToUrl(sample.thumbnailUrl),
+      ...(sample.fullUrl ? { fullUrl: attachDeviceTokenToUrl(sample.fullUrl) } : {}),
+    })),
+  };
+}
+
 async function assertOk(res: Response): Promise<Response> {
+  if (res.status === 401) {
+    notifyDeviceUnauthorized();
+    throw new Error('DEVICE_NOT_TRUSTED');
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(text || `HTTP ${res.status}`);
@@ -118,28 +146,37 @@ async function assertOk(res: Response): Promise<Response> {
   return res;
 }
 
+async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  for (const [k, v] of Object.entries(getDeviceAuthHeaders())) {
+    if (!headers.has(k)) headers.set(k, v);
+  }
+  return assertOk(await fetch(input, { ...init, headers }));
+}
+
 export async function fetchServerVault(): Promise<ServerVaultResponse> {
-  const res = await assertOk(await fetch('/api/vault', { cache: 'no-store' }));
-  return res.json();
+  const res = await apiFetch('/api/vault', { cache: 'no-store' });
+  const data = (await res.json()) as ServerVaultResponse;
+  return {
+    ...data,
+    images: (data.images || []).map(hydrateImageUrls),
+    orders: (data.orders || []).map(hydrateOrderUrls),
+  };
 }
 
 export async function saveServerCategory(category: Category): Promise<Category> {
-  const res = await assertOk(
-    await fetch('/api/categories', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(category),
-    })
-  );
+  const res = await apiFetch('/api/categories', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(category),
+  });
   return res.json();
 }
 
 export async function deleteServerCategory(categoryId: string): Promise<void> {
-  await assertOk(
-    await fetch(`/api/categories/${encodeURIComponent(categoryId)}`, {
-      method: 'DELETE',
-    })
-  );
+  await apiFetch(`/api/categories/${encodeURIComponent(categoryId)}`, {
+    method: 'DELETE',
+  });
 }
 
 export async function uploadServerImage(record: VaultImageRecord): Promise<VaultImageView> {
@@ -151,54 +188,46 @@ export async function uploadServerImage(record: VaultImageRecord): Promise<Vault
   }
   formData.append('metadata', JSON.stringify(meta));
 
-  const res = await assertOk(
-    await fetch('/api/images', {
-      method: 'POST',
-      body: formData,
-    })
-  );
-  return res.json();
+  const res = await apiFetch('/api/images', {
+    method: 'POST',
+    body: formData,
+  });
+  return hydrateImageUrls((await res.json()) as VaultImageView);
 }
 
 export async function updateServerImageMetadata(
   id: string,
   patch: Partial<Pick<VaultImageRecord, 'title' | 'notes' | 'categoryId' | 'tags' | 'isFavorite'>>
 ): Promise<VaultImageView> {
-  const res = await assertOk(
-    await fetch(`/api/images/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(patch),
-    })
-  );
-  return res.json();
+  const res = await apiFetch(`/api/images/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  return hydrateImageUrls((await res.json()) as VaultImageView);
 }
 
 export async function batchUpdateServerImages(
   ids: string[],
   patch: Partial<Pick<VaultImageRecord, 'categoryId' | 'isFavorite'>>
 ): Promise<void> {
-  await assertOk(
-    await fetch('/api/images/batch-update', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids, patch }),
-    })
-  );
+  await apiFetch('/api/images/batch-update', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids, patch }),
+  });
 }
 
 export async function deleteServerImages(ids: string[]): Promise<void> {
-  await assertOk(
-    await fetch('/api/images/batch-delete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids }),
-    })
-  );
+  await apiFetch('/api/images/batch-delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
 }
 
 export async function clearServerVault(): Promise<void> {
-  await assertOk(await fetch('/api/vault', { method: 'DELETE' }));
+  await apiFetch('/api/vault', { method: 'DELETE' });
 }
 
 export interface CreateServerOrderInput {
@@ -232,13 +261,11 @@ export async function createServerOrder(input: CreateServerOrderInput): Promise<
     formData.append('customImages', file, file.name || 'sample.jpg');
   }
 
-  const res = await assertOk(
-    await fetch('/api/orders', {
-      method: 'POST',
-      body: formData,
-    })
-  );
-  return res.json();
+  const res = await apiFetch('/api/orders', {
+    method: 'POST',
+    body: formData,
+  });
+  return hydrateOrderUrls((await res.json()) as OrderRecord);
 }
 
 export interface UpdateServerOrderInput extends CreateServerOrderInput {
@@ -272,39 +299,33 @@ export async function saveFullServerOrder(
     formData.append('customImages', file, file.name || 'sample.jpg');
   }
 
-  const res = await assertOk(
-    await fetch(`/api/orders/${encodeURIComponent(orderId)}`, {
-      method: 'PUT',
-      body: formData,
-    })
-  );
-  return res.json();
+  const res = await apiFetch(`/api/orders/${encodeURIComponent(orderId)}`, {
+    method: 'PUT',
+    body: formData,
+  });
+  return hydrateOrderUrls((await res.json()) as OrderRecord);
 }
 
 export async function updateServerOrder(
   orderId: string,
   patch: Partial<Pick<OrderRecord, 'pickupTime' | 'price' | 'depositAmount' | 'isPaid' | 'isReady' | 'isReceived'>>
 ): Promise<OrderRecord> {
-  const res = await assertOk(
-    await fetch(`/api/orders/${encodeURIComponent(orderId)}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(patch),
-    })
-  );
-  return res.json();
+  const res = await apiFetch(`/api/orders/${encodeURIComponent(orderId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  return hydrateOrderUrls((await res.json()) as OrderRecord);
 }
 
 export async function deleteServerOrder(orderId: string): Promise<void> {
-  await assertOk(
-    await fetch(`/api/orders/${encodeURIComponent(orderId)}`, {
-      method: 'DELETE',
-    })
-  );
+  await apiFetch(`/api/orders/${encodeURIComponent(orderId)}`, {
+    method: 'DELETE',
+  });
 }
 
 export async function exportServerBackup(): Promise<VaultBackupBundle> {
-  const res = await assertOk(await fetch('/api/vault/backup', { cache: 'no-store' }));
+  const res = await apiFetch('/api/vault/backup', { cache: 'no-store' });
   return res.json();
 }
 
@@ -312,13 +333,11 @@ export async function importServerBackup(
   bundle: VaultBackupBundle,
   mode: 'merge' | 'replace'
 ): Promise<{ importedCategories: number; importedImages: number }> {
-  const res = await assertOk(
-    await fetch('/api/vault/restore', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode, bundle }),
-    })
-  );
+  const res = await apiFetch('/api/vault/restore', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode, bundle }),
+  });
   return res.json();
 }
 
@@ -364,7 +383,7 @@ export async function seedServerSampleVault(force = false): Promise<boolean> {
     }
   }
 
-  await assertOk(await fetch('/api/vault/mark-seeded', { method: 'POST' }));
+  await apiFetch('/api/vault/mark-seeded', { method: 'POST' });
   return true;
 }
 

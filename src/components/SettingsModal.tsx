@@ -1,5 +1,11 @@
-import { Eye, EyeOff, Lock, Settings, ShieldCheck, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Eye, EyeOff, Laptop, Lock, Settings, ShieldCheck, Smartphone, Trash2, X } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import {
+  fetchTrustedDevices,
+  logoutCurrentDevice,
+  revokeTrustedDevice,
+  type TrustedDeviceInfo,
+} from '../lib/deviceAuth';
 import type { StorageStats } from '../types/vault';
 import { BackupView } from './BackupView';
 
@@ -47,6 +53,21 @@ export function SettingsModal({
   const [showPassword, setShowPassword] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [trustedDevices, setTrustedDevices] = useState<TrustedDeviceInfo[]>([]);
+  const [devicesLoading, setDevicesLoading] = useState(false);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+
+  const loadDevices = useCallback(async () => {
+    setDevicesLoading(true);
+    try {
+      const res = await fetchTrustedDevices();
+      setTrustedDevices(res.devices);
+    } catch {
+      // Ignore transient errors
+    } finally {
+      setDevicesLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -54,12 +75,15 @@ export function SettingsModal({
     setShowPassword(false);
     setAuthError(null);
     setNowMs(Date.now());
+    if (isAdmin) {
+      void loadDevices();
+    }
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+  }, [isOpen, isAdmin, loadDevices, onClose]);
 
   useEffect(() => {
     if (!isOpen || !isAdmin || !adminExpiresAt) return;
@@ -208,6 +232,125 @@ export function SettingsModal({
                 </form>
               )}
             </div>
+          </section>
+
+          {/* Familiar Devices Section */}
+          <section className="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="font-display text-base font-semibold text-zinc-950 dark:text-zinc-50">
+                    Thiết bị quen thuộc
+                  </h2>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-950/60 dark:text-blue-300">
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                    <span>Đã xác nhận</span>
+                  </span>
+                </div>
+                <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                  Các thiết bị mới truy cập lần đầu đều phải nhập mã xác nhận để được ghi nhớ.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  onClose();
+                  await logoutCurrentDevice();
+                }}
+                className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-zinc-200 px-3 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+              >
+                <Lock className="h-3.5 w-3.5" />
+                <span>Quên thiết bị này</span>
+              </button>
+            </div>
+
+            {isAdmin && (
+              <div className="mt-4 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+                <div className="mb-2.5 flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                    Danh sách thiết bị đã tin cậy ({trustedDevices.length})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void loadDevices()}
+                    className="text-xs font-medium text-blue-400 hover:text-blue-300"
+                  >
+                    {devicesLoading ? 'Đang tải...' : 'Làm mới'}
+                  </button>
+                </div>
+
+                {trustedDevices.length === 0 ? (
+                  <p className="text-xs text-zinc-500">Chưa có thiết bị nào được lưu.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {trustedDevices.map((dev) => {
+                      const isMobile = /iPhone|iPad|Android/i.test(dev.label);
+                      const lastSeenText = new Intl.DateTimeFormat('vi-VN', {
+                        dateStyle: 'short',
+                        timeStyle: 'short',
+                      }).format(new Date(dev.lastSeenAt));
+                      return (
+                        <div
+                          key={dev.id}
+                          className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2.5"
+                        >
+                          <div className="flex min-w-0 items-center gap-2.5">
+                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-zinc-800 text-zinc-300">
+                              {isMobile ? (
+                                <Smartphone className="h-4 w-4" />
+                              ) : (
+                                <Laptop className="h-4 w-4" />
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="truncate text-sm font-medium text-zinc-100">
+                                  {dev.label}
+                                </span>
+                                {dev.isCurrent && (
+                                  <span className="shrink-0 rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300">
+                                    Thiết bị này
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-zinc-400">
+                                Hoạt động gần nhất: {lastSeenText}
+                              </p>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            disabled={revokingId === dev.id}
+                            onClick={async () => {
+                              setRevokingId(dev.id);
+                              try {
+                                const res = await revokeTrustedDevice(dev.id);
+                                if (res.revokedCurrent) {
+                                  onClose();
+                                } else {
+                                  setTrustedDevices((prev) =>
+                                    prev.filter((d) => d.id !== dev.id)
+                                  );
+                                }
+                              } finally {
+                                setRevokingId(null);
+                              }
+                            }}
+                            title="Thu hồi quyền thiết bị này"
+                            className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-rose-900/70 px-2.5 text-xs font-medium text-rose-300 transition-colors hover:bg-rose-950/50 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            <span>Thu hồi</span>
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
           </section>
 
           {/* Backup & Storage Section (Admin only) */}
