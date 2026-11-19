@@ -654,7 +654,7 @@ export function CategoriesView({
                       }
                     }
                   }}
-                  className={`group relative aspect-[4/3] w-full overflow-hidden rounded-lg border bg-zinc-100 [content-visibility:auto] [contain-intrinsic-size:auto_220px] transition-[transform,border-color,opacity] duration-150 focus-visible:outline-2 focus-visible:outline-blue-600 dark:bg-zinc-900 ${
+                  className={`group relative flex w-full flex-col overflow-hidden rounded-lg border bg-zinc-200 [content-visibility:auto] [contain-intrinsic-size:auto_240px] transition-[transform,border-color,opacity] duration-150 focus-visible:outline-2 focus-visible:outline-blue-600 dark:bg-zinc-800 ${
                     isReorderMode
                       ? 'cursor-default'
                       : 'cursor-pointer hover:-translate-y-0.5 active:scale-[0.97]'
@@ -671,179 +671,181 @@ export function CategoriesView({
                   }`}
                 >
                   {/* Image / Collage Preview */}
-                  {previewImages.length === 0 ? (
-                    <div className="flex h-full min-h-[180px] w-full items-center justify-center">
-                      <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/80 shadow-xs dark:bg-zinc-800/80">
-                        <span
-                          aria-hidden="true"
-                          className="h-6 w-6 rounded-full"
-                          style={{ backgroundColor: cat.color || '#2563EB' }}
-                        />
+                  <div className="relative aspect-[4/3] w-full overflow-hidden bg-zinc-100 dark:bg-zinc-900">
+                    {previewImages.length === 0 ? (
+                      <div className="flex h-full w-full items-center justify-center">
+                        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/80 shadow-xs dark:bg-zinc-800/80">
+                          <span
+                            aria-hidden="true"
+                            className="h-6 w-6 rounded-full"
+                            style={{ backgroundColor: cat.color || '#2563EB' }}
+                          />
+                        </div>
                       </div>
-                    </div>
-                  ) : previewImages.length === 1 ? (
-                    <img
-                      src={previewImages[0].thumbnailUrl}
-                      alt={cat.name}
-                      loading={idx < 8 ? 'eager' : 'lazy'}
-                      fetchPriority={idx < 4 ? 'high' : undefined}
-                      decoding="async"
-                      draggable={false}
-                      className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
-                    />
-                  ) : previewImages.length === 2 ? (
-                    <div className="grid h-full w-full grid-cols-2 gap-0.5">
-                      {previewImages.map((img) => (
-                        <img
-                          key={img.id}
-                          src={img.thumbnailUrl}
-                          alt={img.title}
-                          loading={idx < 8 ? 'eager' : 'lazy'}
-                          fetchPriority={idx < 4 ? 'high' : undefined}
-                          decoding="async"
-                          draggable={false}
-                          className="h-full w-full object-cover"
-                        />
-                      ))}
-                    </div>
-                  ) : previewImages.length === 3 ? (
-                    <div className="grid h-full w-full grid-cols-2 grid-rows-2 gap-0.5">
+                    ) : previewImages.length === 1 ? (
                       <img
                         src={previewImages[0].thumbnailUrl}
-                        alt={previewImages[0].title}
+                        alt={cat.name}
                         loading={idx < 8 ? 'eager' : 'lazy'}
                         fetchPriority={idx < 4 ? 'high' : undefined}
                         decoding="async"
                         draggable={false}
-                        className="row-span-2 h-full w-full object-cover"
+                        className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
                       />
-                      <img
-                        src={previewImages[1].thumbnailUrl}
-                        alt={previewImages[1].title}
-                        loading={idx < 8 ? 'eager' : 'lazy'}
-                        decoding="async"
-                        draggable={false}
-                        className="h-full w-full object-cover"
-                      />
-                      <img
-                        src={previewImages[2].thumbnailUrl}
-                        alt={previewImages[2].title}
-                        loading={idx < 8 ? 'eager' : 'lazy'}
-                        decoding="async"
-                        draggable={false}
-                        className="h-full w-full object-cover"
-                      />
-                    </div>
-                  ) : (
-                    <div className="grid h-full w-full grid-cols-2 grid-rows-2 gap-0.5">
-                      {previewImages.map((img, thumbIdx) => {
-                        const isLastWithMore = thumbIdx === 3 && remainingCount > 0;
-                        return (
-                          <div key={img.id} className="relative h-full w-full overflow-hidden">
-                            <img
-                              src={img.thumbnailUrl}
-                              alt={img.title}
-                              loading={idx < 8 ? 'eager' : 'lazy'}
-                              fetchPriority={idx < 4 && thumbIdx === 0 ? 'high' : undefined}
-                              decoding="async"
-                              draggable={false}
-                              className="h-full w-full object-cover"
-                            />
-                            {isLastWithMore && (
-                              <span className="absolute inset-0 flex items-center justify-center bg-black/50 font-mono text-sm font-semibold text-white">
-                                +{remainingCount}
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+                    ) : previewImages.length === 2 ? (
+                      <div className="grid h-full w-full grid-cols-2 gap-0.5">
+                        {previewImages.map((img) => (
+                          <img
+                            key={img.id}
+                            src={img.thumbnailUrl}
+                            alt={img.title}
+                            loading={idx < 8 ? 'eager' : 'lazy'}
+                            fetchPriority={idx < 4 ? 'high' : undefined}
+                            decoding="async"
+                            draggable={false}
+                            className="h-full w-full object-cover"
+                          />
+                        ))}
+                      </div>
+                    ) : previewImages.length === 3 ? (
+                      <div className="grid h-full w-full grid-cols-2 grid-rows-2 gap-0.5">
+                        <img
+                          src={previewImages[0].thumbnailUrl}
+                          alt={previewImages[0].title}
+                          loading={idx < 8 ? 'eager' : 'lazy'}
+                          fetchPriority={idx < 4 ? 'high' : undefined}
+                          decoding="async"
+                          draggable={false}
+                          className="row-span-2 h-full w-full object-cover"
+                        />
+                        <img
+                          src={previewImages[1].thumbnailUrl}
+                          alt={previewImages[1].title}
+                          loading={idx < 8 ? 'eager' : 'lazy'}
+                          decoding="async"
+                          draggable={false}
+                          className="h-full w-full object-cover"
+                        />
+                        <img
+                          src={previewImages[2].thumbnailUrl}
+                          alt={previewImages[2].title}
+                          loading={idx < 8 ? 'eager' : 'lazy'}
+                          decoding="async"
+                          draggable={false}
+                          className="h-full w-full object-cover"
+                        />
+                      </div>
+                    ) : (
+                      <div className="grid h-full w-full grid-cols-2 grid-rows-2 gap-0.5">
+                        {previewImages.map((img, thumbIdx) => {
+                          const isLastWithMore = thumbIdx === 3 && remainingCount > 0;
+                          return (
+                            <div key={img.id} className="relative h-full w-full overflow-hidden">
+                              <img
+                                src={img.thumbnailUrl}
+                                alt={img.title}
+                                loading={idx < 8 ? 'eager' : 'lazy'}
+                                fetchPriority={idx < 4 && thumbIdx === 0 ? 'high' : undefined}
+                                decoding="async"
+                                draggable={false}
+                                className="h-full w-full object-cover"
+                              />
+                              {isLastWithMore && (
+                                <span className="absolute inset-0 flex items-center justify-center bg-black/50 font-mono text-sm font-semibold text-white">
+                                  +{remainingCount}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
 
-                  {/* Frosted Bottom Strip Album Name */}
-                  <div className="pointer-events-none absolute inset-x-0 bottom-0 border-t border-white/10 bg-zinc-950/55 px-2.5 py-1.5 backdrop-blur-md sm:px-3 sm:py-2">
-                    <span className="font-display block truncate text-xs font-semibold text-white sm:text-sm">
+                    {/* Selection Checkbox Badge in Batch Mode */}
+                    {canManage && isBatchMode && (
+                      <div className="pointer-events-none absolute left-2 top-2 sm:left-2.5 sm:top-2.5">
+                        <span
+                          className={`flex h-6 w-6 items-center justify-center rounded-md border transition-colors ${
+                            isSelected
+                              ? 'border-blue-500 bg-blue-600 text-white shadow'
+                              : 'border-white/80 bg-black/45 text-transparent'
+                          }`}
+                        >
+                          <Check className="h-3.5 w-3.5" />
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Reorder Mode Controls: Position Badge + Move Left / Drag Handle / Move Right */}
+                    {canManage && isReorderMode && (
+                      <>
+                        <span className="tabular-nums pointer-events-none absolute left-2 top-2 rounded-md bg-black/70 px-2 py-0.5 text-xs font-bold text-white backdrop-blur-xs sm:left-2.5 sm:top-2.5">
+                          #{idx + 1}
+                        </span>
+
+                        <div
+                          className="absolute right-1.5 top-1.5 z-10 flex items-center gap-1 rounded-xl border border-white/15 bg-black/70 p-1 shadow-lg backdrop-blur-xs sm:right-2 sm:top-2"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => void moveCategoryByOffset(cat.id, -1)}
+                            disabled={idx === 0 || isReordering}
+                            aria-label={`Đưa album ${cat.name} lên trước`}
+                            title="Đưa lên trước"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-white transition-colors hover:bg-white/15 disabled:opacity-30 sm:h-9 sm:w-9"
+                          >
+                            <ChevronLeft className="h-4 w-4 sm:h-5 sm:w-5" />
+                          </button>
+
+                          <button
+                            type="button"
+                            onPointerDown={(e) => startDragReorder(e, cat.id)}
+                            aria-label={`Kéo để đổi vị trí album ${cat.name}`}
+                            title="Kéo để đổi vị trí"
+                            className="inline-flex h-8 w-8 touch-none cursor-grab items-center justify-center rounded-lg text-zinc-200 transition-colors hover:bg-white/15 active:cursor-grabbing sm:h-9 sm:w-9"
+                          >
+                            <GripHorizontal className="h-4 w-4 sm:h-5 sm:w-5" />
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => void moveCategoryByOffset(cat.id, 1)}
+                            disabled={idx === displayedCategories.length - 1 || isReordering}
+                            aria-label={`Đưa album ${cat.name} xuống sau`}
+                            title="Đưa xuống sau"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-white transition-colors hover:bg-white/15 disabled:opacity-30 sm:h-9 sm:w-9"
+                          >
+                            <ChevronRight className="h-4 w-4 sm:h-5 sm:w-5" />
+                          </button>
+                        </div>
+                      </>
+                    )}
+
+                    {/* Square Edit Button inside image */}
+                    {canManage && !isBatchMode && !isReorderMode && (
+                      <button
+                        type="button"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openEditModal(cat);
+                        }}
+                        aria-label={`Chỉnh sửa ${cat.name}`}
+                        title={`Chỉnh sửa ${cat.name}`}
+                        className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-lg bg-black/60 text-white transition-colors hover:bg-black/80 sm:right-2.5 sm:top-2.5 sm:h-8 sm:w-8"
+                      >
+                        <Pencil className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Solid Gray Footer for Album Name */}
+                  <div className="border-t border-zinc-300/80 bg-zinc-200 px-2.5 py-2 dark:border-zinc-700/80 dark:bg-zinc-800 sm:px-3 sm:py-2">
+                    <span className="font-display block truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100 sm:text-sm">
                       {cat.name}
                     </span>
                   </div>
-
-                  {/* Selection Checkbox Badge in Batch Mode */}
-                  {canManage && isBatchMode && (
-                    <div className="pointer-events-none absolute left-2 top-2 sm:left-2.5 sm:top-2.5">
-                      <span
-                        className={`flex h-6 w-6 items-center justify-center rounded-md border transition-colors ${
-                          isSelected
-                            ? 'border-blue-500 bg-blue-600 text-white shadow'
-                            : 'border-white/80 bg-black/45 text-transparent'
-                        }`}
-                      >
-                        <Check className="h-3.5 w-3.5" />
-                      </span>
-                    </div>
-                  )}
-
-                  {/* Reorder Mode Controls: Position Badge + Move Left / Drag Handle / Move Right */}
-                  {canManage && isReorderMode && (
-                    <>
-                      <span className="tabular-nums pointer-events-none absolute left-2 top-2 rounded-md bg-black/70 px-2 py-0.5 text-xs font-bold text-white backdrop-blur-xs sm:left-2.5 sm:top-2.5">
-                        #{idx + 1}
-                      </span>
-
-                      <div
-                        className="absolute right-1.5 top-1.5 z-10 flex items-center gap-1 rounded-xl border border-white/15 bg-black/70 p-1 shadow-lg backdrop-blur-xs sm:right-2 sm:top-2"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => void moveCategoryByOffset(cat.id, -1)}
-                          disabled={idx === 0 || isReordering}
-                          aria-label={`Đưa album ${cat.name} lên trước`}
-                          title="Đưa lên trước"
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-white transition-colors hover:bg-white/15 disabled:opacity-30 sm:h-9 sm:w-9"
-                        >
-                          <ChevronLeft className="h-4 w-4 sm:h-5 sm:w-5" />
-                        </button>
-
-                        <button
-                          type="button"
-                          onPointerDown={(e) => startDragReorder(e, cat.id)}
-                          aria-label={`Kéo để đổi vị trí album ${cat.name}`}
-                          title="Kéo để đổi vị trí"
-                          className="inline-flex h-8 w-8 touch-none cursor-grab items-center justify-center rounded-lg text-zinc-200 transition-colors hover:bg-white/15 active:cursor-grabbing sm:h-9 sm:w-9"
-                        >
-                          <GripHorizontal className="h-4 w-4 sm:h-5 sm:w-5" />
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => void moveCategoryByOffset(cat.id, 1)}
-                          disabled={idx === displayedCategories.length - 1 || isReordering}
-                          aria-label={`Đưa album ${cat.name} xuống sau`}
-                          title="Đưa xuống sau"
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-white transition-colors hover:bg-white/15 disabled:opacity-30 sm:h-9 sm:w-9"
-                        >
-                          <ChevronRight className="h-4 w-4 sm:h-5 sm:w-5" />
-                        </button>
-                      </div>
-                    </>
-                  )}
-
-                  {/* Frosted Square Edit Button inside image */}
-                  {canManage && !isBatchMode && !isReorderMode && (
-                    <button
-                      type="button"
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openEditModal(cat);
-                      }}
-                      aria-label={`Chỉnh sửa ${cat.name}`}
-                      title={`Chỉnh sửa ${cat.name}`}
-                      className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-lg bg-black/60 text-white transition-colors hover:bg-black/80 sm:right-2.5 sm:top-2.5 sm:h-8 sm:w-8"
-                    >
-                      <Pencil className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                    </button>
-                  )}
                 </article>
               );
             })}
