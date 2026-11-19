@@ -44,6 +44,7 @@ function ResilientThumbnail({
       src={src}
       alt={alt}
       loading="lazy"
+      decoding="async"
       draggable={false}
       referrerPolicy="no-referrer"
       onError={() => setFailed(true)}

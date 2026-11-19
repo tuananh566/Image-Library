@@ -227,7 +227,7 @@ export function SettingsModal({
   }, [isOpen, isAdmin, loadDevices, loadGithubStatus, onClose]);
 
   useEffect(() => {
-    if (!isOpen || !isAdmin || !adminExpiresAt) return;
+    if (!isOpen || !isAdmin || !adminExpiresAt || !Number.isFinite(adminExpiresAt)) return;
     const id = window.setInterval(() => {
       setNowMs(Date.now());
     }, 15_000);
@@ -302,14 +302,16 @@ export function SettingsModal({
                   <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
                     {isAdmin
                       ? `Thiết bị này đang có quyền Admin${
-                          adminExpiresAt
+                          adminExpiresAt && Number.isFinite(adminExpiresAt)
                             ? ` (tự khóa lại sau ${Math.max(
                                 1,
                                 Math.ceil((adminExpiresAt - nowMs) / 60_000)
                               )} phút)`
-                            : ''
+                            : adminExpiresAt === Infinity
+                              ? ' (mở khóa không giới hạn thời gian)'
+                              : ''
                         }.`
-                      : 'Mặc định thiết bị chỉ có quyền xem. Nhập mật khẩu Admin để mở khóa trong 1 tiếng.'}
+                      : 'Mặc định thiết bị chỉ có quyền xem. Nhập mật khẩu Admin để mở khóa.'}
                   </p>
                 </div>
 

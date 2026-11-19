@@ -94,7 +94,7 @@ const VIEW_TRANSITION_VARIANTS = {
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<AppTab>('library');
+  const [activeTab, setActiveTab] = useState<AppTab>('categories');
   const [adminExpiresAt, setAdminExpiresAt] = useState<number | null>(() =>
     getAdminExpiresAt()
   );
@@ -157,19 +157,25 @@ export default function App() {
   useEffect(() => {
     if (adminExpiresAt === null) return;
 
-    const remainingMs = adminExpiresAt - Date.now();
-    if (remainingMs <= 0) {
-      logoutAdmin();
-      return;
-    }
+    let timeoutId: number | undefined;
+    if (Number.isFinite(adminExpiresAt)) {
+      const remainingMs = adminExpiresAt - Date.now();
+      if (remainingMs <= 0) {
+        logoutAdmin();
+        return;
+      }
 
-    const timeoutId = window.setTimeout(() => {
-      logoutAdmin();
-    }, remainingMs);
+      timeoutId = window.setTimeout(() => {
+        logoutAdmin();
+      }, remainingMs);
+    }
 
     const checkExpiration = () => {
       const validUntil = getAdminExpiresAt();
-      if (validUntil === null || Date.now() >= validUntil) {
+      if (
+        validUntil === null ||
+        (Number.isFinite(validUntil) && Date.now() >= validUntil)
+      ) {
         logoutAdmin();
       }
     };
@@ -188,7 +194,9 @@ export default function App() {
     window.addEventListener('storage', handleStorage);
 
     return () => {
-      window.clearTimeout(timeoutId);
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId);
+      }
       window.removeEventListener('focus', checkExpiration);
       document.removeEventListener('visibilitychange', checkExpiration);
       window.removeEventListener('storage', handleStorage);
@@ -274,7 +282,7 @@ export default function App() {
       }
 
       isGoingBackRef.current = true;
-      setActiveTab('library');
+      setActiveTab('categories');
       return;
     }
 
@@ -1161,7 +1169,12 @@ export default function App() {
         currentDevice={currentDevice}
         onCurrentDeviceUpdated={(updated) => setCurrentDevice(updated)}
         onAuthenticateAdmin={(password) => {
-          if (password.trim() === 'admin') {
+          const normalized = password.trim();
+          if (normalized === 'tuananh') {
+            setAdminExpiresAt(grantAdminSession({ unlimited: true }));
+            return true;
+          }
+          if (normalized === 'admin') {
             setAdminExpiresAt(grantAdminSession());
             return true;
           }

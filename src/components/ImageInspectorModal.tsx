@@ -42,6 +42,43 @@ interface ImageInspectorModalProps {
 
 const MIN_SCALE = 1;
 const MAX_SCALE = 4;
+const PRELOAD_NEAREST_COUNT = 5;
+
+interface PreloadedPreviewEntry {
+  fullUrl: string;
+  isObjectUrl: boolean;
+  fullImg?: HTMLImageElement;
+  thumbImg?: HTMLImageElement;
+  cancelled?: boolean;
+}
+
+function getNearestPreviewImages(
+  images: VaultImageView[],
+  activeId: string,
+  limit = PRELOAD_NEAREST_COUNT
+): VaultImageView[] {
+  if (images.length <= 1 || limit <= 0) return [];
+  const activeIndex = images.findIndex((item) => item.id === activeId);
+  if (activeIndex === -1) {
+    return images.slice(0, limit);
+  }
+
+  const nearest: VaultImageView[] = [];
+  for (
+    let offset = 1;
+    nearest.length < limit &&
+    (activeIndex + offset < images.length || activeIndex - offset >= 0);
+    offset += 1
+  ) {
+    if (activeIndex + offset < images.length && nearest.length < limit) {
+      nearest.push(images[activeIndex + offset]);
+    }
+    if (activeIndex - offset >= 0 && nearest.length < limit) {
+      nearest.push(images[activeIndex - offset]);
+    }
+  }
+  return nearest;
+}
 
 function getCardZoomOffset(imageId: string): { x: number; y: number; scale: number } {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
@@ -123,6 +160,7 @@ function ImageInspectorContent({
   const drawerTouchStartXRef = useRef<number | null>(null);
   const lastTapRef = useRef<number>(0);
   const suppressBackdropClickRef = useRef<boolean>(false);
+  const preloadCacheRef = useRef<Map<string, PreloadedPreviewEntry>>(new Map());
 
   const onPrevRef = useRef(onPrev);
   onPrevRef.current = onPrev;
@@ -178,6 +216,15 @@ function ImageInspectorContent({
     [applyTransform]
   );
 
+  const nearestImages = useMemo(
+    () => (image ? getNearestPreviewImages(images, image.id, PRELOAD_NEAREST_COUNT) : []),
+    [images, image]
+  );
+  const nearestIdSet = useMemo(
+    () => new Set(nearestImages.map((item) => item.id)),
+    [nearestImages]
+  );
+
   useEffect(() => {
     if (!image) {
       setShowInfo(false);
@@ -204,25 +251,125 @@ function ImageInspectorContent({
 
     if (image.fullUrl) {
       setFullUrl(image.fullUrl);
-      return () => {
-        setFullUrl('');
-      };
+      return;
     }
 
-    let activeUrl = '';
+    const preloaded = preloadCacheRef.current.get(image.id);
+    if (preloaded?.fullUrl) {
+      setFullUrl(preloaded.fullUrl);
+      return;
+    }
+
+    setFullUrl('');
     let cancelled = false;
     getImageById(image.id).then((rec) => {
       if (cancelled || !rec) return;
-      activeUrl = URL.createObjectURL(rec.blob);
-      setFullUrl(activeUrl);
+      const existing = preloadCacheRef.current.get(image.id);
+      if (existing?.fullUrl) {
+        setFullUrl(existing.fullUrl);
+        return;
+      }
+      const objectUrl = URL.createObjectURL(rec.blob);
+      preloadCacheRef.current.set(image.id, {
+        fullUrl: objectUrl,
+        isObjectUrl: true,
+      });
+      setFullUrl(objectUrl);
     });
 
     return () => {
       cancelled = true;
-      if (activeUrl) URL.revokeObjectURL(activeUrl);
-      setFullUrl('');
     };
-  }, [image?.id, image?.fullUrl, resetZoom]);
+  }, [image?.id, image?.fullUrl, applyTransform]);
+
+  // Preload only the 5 nearest images to the active previewed image (and evict far ones) to prevent lag
+  useEffect(() => {
+    if (!image) return;
+
+    const cache = preloadCacheRef.current;
+    const keepIds = new Set<string>([image.id]);
+    for (const neighbor of nearestImages) {
+      keepIds.add(neighbor.id);
+    }
+
+    for (const [cachedId, entry] of cache.entries()) {
+      if (!keepIds.has(cachedId)) {
+        entry.cancelled = true;
+        if (entry.isObjectUrl && entry.fullUrl) {
+          URL.revokeObjectURL(entry.fullUrl);
+        }
+        cache.delete(cachedId);
+      }
+    }
+
+    for (const neighbor of nearestImages) {
+      const existing = cache.get(neighbor.id);
+      if (existing && (!neighbor.fullUrl || existing.fullUrl === neighbor.fullUrl)) {
+        continue;
+      }
+      if (existing?.isObjectUrl && existing.fullUrl) {
+        URL.revokeObjectURL(existing.fullUrl);
+      }
+
+      let thumbImg: HTMLImageElement | undefined;
+      if (neighbor.thumbnailUrl) {
+        thumbImg = new Image();
+        thumbImg.decoding = 'async';
+        thumbImg.referrerPolicy = 'no-referrer';
+        thumbImg.src = neighbor.thumbnailUrl;
+      }
+
+      if (neighbor.fullUrl) {
+        const fullImg = new Image();
+        fullImg.decoding = 'async';
+        fullImg.referrerPolicy = 'no-referrer';
+        fullImg.onload = () => {
+          void fullImg.decode?.().catch(() => {});
+        };
+        fullImg.src = neighbor.fullUrl;
+        cache.set(neighbor.id, {
+          fullUrl: neighbor.fullUrl,
+          isObjectUrl: false,
+          fullImg,
+          thumbImg,
+        });
+      } else {
+        const entry: PreloadedPreviewEntry = {
+          fullUrl: '',
+          isObjectUrl: false,
+          thumbImg,
+          cancelled: false,
+        };
+        cache.set(neighbor.id, entry);
+        getImageById(neighbor.id).then((rec) => {
+          if (entry.cancelled || !rec) return;
+          const objectUrl = URL.createObjectURL(rec.blob);
+          const fullImg = new Image();
+          fullImg.decoding = 'async';
+          fullImg.onload = () => {
+            void fullImg.decode?.().catch(() => {});
+          };
+          fullImg.src = objectUrl;
+          entry.fullUrl = objectUrl;
+          entry.isObjectUrl = true;
+          entry.fullImg = fullImg;
+        });
+      }
+    }
+  }, [image?.id, nearestImages]);
+
+  useEffect(() => {
+    const cache = preloadCacheRef.current;
+    return () => {
+      for (const entry of cache.values()) {
+        entry.cancelled = true;
+        if (entry.isObjectUrl && entry.fullUrl) {
+          URL.revokeObjectURL(entry.fullUrl);
+        }
+      }
+      cache.clear();
+    };
+  }, []);
 
   useEffect(() => {
     if (!image?.id) return;
@@ -607,7 +754,7 @@ function ImageInspectorContent({
     URL.revokeObjectURL(url);
   };
 
-  const displaySrc = fullUrl || image.thumbnailUrl;
+  const displaySrc = image.fullUrl || fullUrl || image.thumbnailUrl;
   const formattedDate = new Intl.DateTimeFormat('vi-VN', {
     dateStyle: 'medium',
     timeStyle: 'short',
@@ -695,6 +842,8 @@ function ImageInspectorContent({
               ref={imgRef}
               src={displaySrc}
               alt={image.title}
+              decoding="async"
+              referrerPolicy="no-referrer"
               draggable={false}
               onPointerDown={handleMousePointerDown}
               onDoubleClick={(e) => toggleDoubleTapZoom(e.clientX, e.clientY)}
@@ -744,6 +893,7 @@ function ImageInspectorContent({
               >
                 {images.map((item) => {
                   const isActive = item.id === image.id;
+                  const isNearActive = isActive || nearestIdSet.has(item.id);
                   return (
                     <button
                       key={item.id}
@@ -762,7 +912,9 @@ function ImageInspectorContent({
                       <img
                         src={item.thumbnailUrl}
                         alt={item.title}
-                        loading="lazy"
+                        loading={isNearActive ? 'eager' : 'lazy'}
+                        decoding="async"
+                        referrerPolicy="no-referrer"
                         className="h-full w-full object-cover"
                       />
                     </button>
