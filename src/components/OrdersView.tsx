@@ -824,16 +824,16 @@ export function OrdersView({
               </button>
             </div>
 
-            {/* Two-Column Body: Left = Sample Images, Right = Order Information */}
-            <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto sm:grid-cols-[minmax(250px,43%)_minmax(0,1fr)] sm:overflow-hidden">
+            {/* Body: Mobile portrait = Sample left half, Name & Phone right half, Remaining full-width below; Tablet/Desktop = 2 columns */}
+            <div className="grid min-h-0 flex-1 grid-cols-2 content-start overflow-y-auto sm:grid-cols-[minmax(250px,43%)_minmax(0,1fr)] sm:grid-rows-1 sm:content-stretch sm:overflow-hidden">
               {/* Left Side: Sample Image Showcase */}
-              <div className="flex flex-col gap-3 border-b border-zinc-800 bg-zinc-900/35 p-4 sm:min-h-0 sm:overflow-y-auto sm:border-b-0 sm:border-r sm:p-5">
+              <div className="col-start-1 row-start-1 flex flex-col gap-2 border-b border-r border-zinc-800 bg-zinc-900/35 p-3 sm:min-h-0 sm:gap-3 sm:overflow-y-auto sm:border-b-0 sm:p-5">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs font-semibold text-zinc-300">
                     Ảnh mẫu ({selectedOrder.sampleImages.length})
                   </span>
                   {selectedOrder.sampleImages.length > 0 && (
-                    <span className="text-[11px] text-zinc-500">
+                    <span className="hidden text-[11px] text-zinc-500 sm:inline">
                       Chạm ảnh để phóng to
                     </span>
                   )}
@@ -866,20 +866,20 @@ export function OrdersView({
                             className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
                           />
                           {selectedOrder.sampleImages.length > 1 && (
-                            <span className="tabular-nums absolute bottom-2 right-2 rounded-md bg-zinc-950/85 px-2 py-0.5 text-xs font-semibold text-zinc-100">
+                            <span className="tabular-nums absolute bottom-1.5 right-1.5 rounded-md bg-zinc-950/85 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-100 sm:bottom-2 sm:right-2 sm:px-2 sm:text-xs">
                               {safeIndex + 1} / {selectedOrder.sampleImages.length}
                             </span>
                           )}
                         </button>
 
                         {activeSample.title && (
-                          <p className="truncate text-xs font-medium text-zinc-300">
+                          <p className="truncate text-[11px] font-medium text-zinc-300 sm:text-xs">
                             {activeSample.title}
                           </p>
                         )}
 
                         {selectedOrder.sampleImages.length > 1 && (
-                          <div className="grid grid-cols-4 gap-2">
+                          <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 sm:gap-2">
                             {selectedOrder.sampleImages.map((img, idx) => (
                               <button
                                 key={img.id}
@@ -905,38 +905,38 @@ export function OrdersView({
                     );
                   })()
                 ) : (
-                  <div className="flex aspect-square w-full flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-800 bg-zinc-900/40 px-4 text-center text-xs text-zinc-500">
-                    <ImageIcon className="h-8 w-8 text-zinc-600" />
-                    <span>Không có ảnh mẫu đính kèm</span>
+                  <div className="flex aspect-square w-full flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-zinc-800 bg-zinc-900/40 px-3 text-center text-[11px] text-zinc-500 sm:gap-2 sm:px-4 sm:text-xs">
+                    <ImageIcon className="h-6 w-6 text-zinc-600 sm:h-8 sm:w-8" />
+                    <span>Không có ảnh mẫu</span>
                   </div>
                 )}
               </div>
 
-              {/* Right Side: Customer, Pickup Time, Price & Description */}
-              <div className="space-y-3.5 p-4 sm:min-h-0 sm:overflow-y-auto sm:p-5">
-                {/* Customer & Pickup Time */}
-                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                  <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3.5">
+              {/* Right Side Wrapper: `contents` on mobile puts Customer Info next to Sample Image & Remaining Info below */}
+              <div className="contents sm:col-start-2 sm:row-start-1 sm:block sm:min-h-0 sm:space-y-3.5 sm:overflow-y-auto sm:p-5">
+                {/* Customer Name, Phone & Pickup Time (Right half on mobile portrait) */}
+                <div className="col-start-2 row-start-1 flex flex-col justify-start gap-2.5 border-b border-zinc-800 p-3 sm:grid sm:grid-cols-1 sm:gap-3.5 sm:border-b-0 sm:p-0 lg:grid-cols-2">
+                  <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 sm:p-3.5">
                     <span className="block text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
                       Khách hàng
                     </span>
-                    <div className="mt-1.5 space-y-1">
-                      <p className="flex items-center gap-2 text-sm font-semibold text-zinc-100">
-                        <User className="h-4 w-4 shrink-0 text-zinc-400" />
-                        <span>{selectedOrder.customerName}</span>
+                    <div className="mt-1.5 space-y-1.5">
+                      <p className="flex items-start gap-2 text-sm font-semibold text-zinc-100">
+                        <User className="mt-0.5 h-4 w-4 shrink-0 text-zinc-400" />
+                        <span className="break-words">{selectedOrder.customerName}</span>
                       </p>
                       <a
                         href={`tel:${selectedOrder.customerPhone.replace(/\s+/g, '')}`}
                         className="tabular-nums inline-flex items-center gap-2 text-sm font-medium text-blue-400 hover:underline"
                       >
                         <Phone className="h-4 w-4 shrink-0" />
-                        <span>{selectedOrder.customerPhone}</span>
+                        <span className="break-all">{selectedOrder.customerPhone}</span>
                       </a>
                     </div>
                   </div>
 
                   <div
-                    className={`rounded-xl border p-3.5 ${
+                    className={`rounded-xl border p-3 sm:p-3.5 ${
                       selectedOrder.isReceived
                         ? 'border-emerald-800/70 bg-emerald-950/25'
                         : 'border-blue-900/60 bg-blue-950/20'
@@ -951,7 +951,7 @@ export function OrdersView({
                       <span>Thời gian lấy</span>
                     </span>
                     <p
-                      className={`tabular-nums mt-1.5 text-base font-bold ${
+                      className={`tabular-nums mt-1.5 text-sm font-bold sm:text-base ${
                         selectedOrder.isReceived ? 'text-emerald-200' : 'text-blue-200'
                       }`}
                     >
@@ -960,66 +960,70 @@ export function OrdersView({
                   </div>
                 </div>
 
-                {/* Price & Payment Details */}
-                {(() => {
-                  const deposit = Math.max(0, Number(selectedOrder.depositAmount) || 0);
-                  const remaining = Math.max(0, selectedOrder.price - deposit);
-                  const isPaidInFull =
-                    Boolean(selectedOrder.isReceived) ||
-                    Boolean(selectedOrder.isPaid) ||
-                    (selectedOrder.price > 0 && deposit >= selectedOrder.price);
+                {/* Remaining Order Info (Full-width below on mobile portrait) */}
+                <div className="col-span-2 row-start-2 space-y-3 p-3.5 sm:space-y-3.5 sm:p-0">
 
-                  return (
-                    <div className="grid grid-cols-3 gap-2.5 rounded-xl border border-zinc-800 bg-zinc-900/60 p-3.5">
-                      <div>
-                        <span className="block text-[11px] font-medium text-zinc-400">
-                          Giá tiền
-                        </span>
-                        <span className="tabular-nums mt-0.5 block text-sm font-bold text-blue-400 sm:text-base">
-                          {formatPriceVnd(selectedOrder.price)}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="block text-[11px] font-medium text-zinc-400">
-                          Đã cọc
-                        </span>
-                        <span className="tabular-nums mt-0.5 block text-sm font-semibold text-zinc-100 sm:text-base">
-                          {deposit > 0 ? formatPriceVnd(deposit) : '0 đ'}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="block text-[11px] font-medium text-zinc-400">
-                          Thanh toán
-                        </span>
-                        {selectedOrder.price > 0 ? (
-                          isPaidInFull ? (
-                            <span className="mt-0.5 inline-flex items-center gap-1 text-sm font-semibold text-emerald-400 sm:text-base">
-                              <CheckCircle2 className="h-4 w-4 shrink-0" />
-                              <span>Đã trả đủ</span>
-                            </span>
-                          ) : (
-                            <span className="tabular-nums mt-0.5 block text-sm font-bold text-amber-300 sm:text-base">
-                              Thiếu {formatPriceVnd(remaining)}
-                            </span>
-                          )
-                        ) : (
-                          <span className="mt-0.5 block text-sm font-medium text-zinc-400">
-                            Thỏa thuận
+                  {/* Price & Payment Details */}
+                  {(() => {
+                    const deposit = Math.max(0, Number(selectedOrder.depositAmount) || 0);
+                    const remaining = Math.max(0, selectedOrder.price - deposit);
+                    const isPaidInFull =
+                      Boolean(selectedOrder.isReceived) ||
+                      Boolean(selectedOrder.isPaid) ||
+                      (selectedOrder.price > 0 && deposit >= selectedOrder.price);
+
+                    return (
+                      <div className="grid grid-cols-3 gap-2.5 rounded-xl border border-zinc-800 bg-zinc-900/60 p-3.5">
+                        <div>
+                          <span className="block text-[11px] font-medium text-zinc-400">
+                            Giá tiền
                           </span>
-                        )}
+                          <span className="tabular-nums mt-0.5 block text-sm font-bold text-blue-400 sm:text-base">
+                            {formatPriceVnd(selectedOrder.price)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="block text-[11px] font-medium text-zinc-400">
+                            Đã cọc
+                          </span>
+                          <span className="tabular-nums mt-0.5 block text-sm font-semibold text-zinc-100 sm:text-base">
+                            {deposit > 0 ? formatPriceVnd(deposit) : '0 đ'}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="block text-[11px] font-medium text-zinc-400">
+                            Thanh toán
+                          </span>
+                          {selectedOrder.price > 0 ? (
+                            isPaidInFull ? (
+                              <span className="mt-0.5 inline-flex items-center gap-1 text-sm font-semibold text-emerald-400 sm:text-base">
+                                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                                <span>Đã trả đủ</span>
+                              </span>
+                            ) : (
+                              <span className="tabular-nums mt-0.5 block text-sm font-bold text-amber-300 sm:text-base">
+                                Thiếu {formatPriceVnd(remaining)}
+                              </span>
+                            )
+                          ) : (
+                            <span className="mt-0.5 block text-sm font-medium text-zinc-400">
+                              Thỏa thuận
+                            </span>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })()}
+                    );
+                  })()}
 
-                {/* Full Product Description */}
-                <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3.5">
-                  <span className="block text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
-                    Mô tả sản phẩm
-                  </span>
-                  <p className="mt-1.5 whitespace-pre-line text-sm leading-relaxed text-zinc-100">
-                    {selectedOrder.productDescription || 'Không có mô tả chi tiết.'}
-                  </p>
+                  {/* Full Product Description */}
+                  <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3.5">
+                    <span className="block text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+                      Mô tả sản phẩm
+                    </span>
+                    <p className="mt-1.5 whitespace-pre-line text-sm leading-relaxed text-zinc-100">
+                      {selectedOrder.productDescription || 'Không có mô tả chi tiết.'}
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>

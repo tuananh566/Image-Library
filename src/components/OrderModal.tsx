@@ -355,48 +355,48 @@ export function OrderModal({
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
-          <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto sm:grid-cols-[minmax(270px,43%)_minmax(0,1fr)] sm:overflow-hidden">
-            {/* Left Side: Sample Images */}
-            <div className="space-y-3 border-b border-zinc-800 bg-zinc-900/35 p-4 sm:min-h-0 sm:overflow-y-auto sm:border-b-0 sm:border-r sm:p-5">
-              <div className="space-y-2.5">
+          <div className="grid min-h-0 flex-1 grid-cols-2 content-start overflow-y-auto sm:grid-cols-[minmax(270px,43%)_minmax(0,1fr)] sm:grid-rows-1 sm:content-stretch sm:overflow-hidden">
+            {/* Left Side: Sample Images (Left half on mobile portrait, full left column on tablet/desktop) */}
+            <div className="col-start-1 row-start-1 space-y-2.5 border-b border-r border-zinc-800 bg-zinc-900/35 p-3 sm:min-h-0 sm:space-y-3 sm:overflow-y-auto sm:border-b-0 sm:p-5">
+              <div className="space-y-2">
                 <div>
                   <span className="block text-xs font-semibold text-zinc-200">
                     Ảnh mẫu ({totalSampleCount})
                   </span>
-                  <span className="text-xs text-zinc-400">
+                  <span className="hidden text-xs text-zinc-400 sm:block">
                     Chọn từ kho ảnh mẫu có sẵn hoặc tải ảnh trực tiếp từ thiết bị.
                   </span>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                   <button
                     type="button"
                     onClick={() => setShowLibraryPicker((v) => !v)}
-                    className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                    className={`inline-flex h-8 items-center gap-1 rounded-lg border px-2 text-[11px] font-medium transition-colors whitespace-nowrap shrink-0 sm:h-9 sm:gap-1.5 sm:px-3 sm:text-xs ${
                       showLibraryPicker
                         ? 'border-blue-500 bg-blue-950/60 text-blue-300'
                         : 'border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800'
                     }`}
                   >
                     <ImageIcon className="h-3.5 w-3.5" />
-                    <span>{showLibraryPicker ? 'Ẩn thư viện' : 'Chọn từ thư viện'}</span>
+                    <span>{showLibraryPicker ? 'Ẩn' : 'Thư viện'}</span>
                   </button>
 
                   <label
                     htmlFor={fileInputId}
-                    className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800 whitespace-nowrap shrink-0"
+                    className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-lg border border-zinc-700 bg-zinc-900 px-2 text-[11px] font-medium text-zinc-200 transition-colors hover:bg-zinc-800 whitespace-nowrap shrink-0 sm:h-9 sm:gap-1.5 sm:px-3 sm:text-xs"
                   >
                     <ImagePlus className="h-3.5 w-3.5" />
-                    <span>Tải ảnh lên</span>
+                    <span>Tải ảnh</span>
                   </label>
 
                   {isTouchDevice && (
                     <label
                       htmlFor={cameraInputId}
-                      className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800 whitespace-nowrap shrink-0"
+                      className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-lg border border-zinc-700 bg-zinc-900 px-2 text-[11px] font-medium text-zinc-200 transition-colors hover:bg-zinc-800 whitespace-nowrap shrink-0 sm:h-9 sm:gap-1.5 sm:px-3 sm:text-xs"
                     >
                       <Camera className="h-3.5 w-3.5" />
-                      <span>Chụp ảnh</span>
+                      <span>Chụp</span>
                     </label>
                   )}
 
@@ -517,30 +517,30 @@ export function OrderModal({
                   ))}
                 </div>
               ) : (
-                <div className="flex min-h-[140px] items-center justify-center rounded-xl border border-dashed border-zinc-800 bg-zinc-900/40 px-4 py-6 text-center text-xs text-zinc-400">
-                  Chưa chọn ảnh mẫu. Bạn có thể chọn nhanh từ thư viện hoặc tải ảnh từ thiết bị.
+                <div className="flex min-h-[104px] items-center justify-center rounded-xl border border-dashed border-zinc-800 bg-zinc-900/40 px-2.5 py-4 text-center text-[11px] leading-relaxed text-zinc-400 sm:min-h-[140px] sm:px-4 sm:py-6 sm:text-xs">
+                  Chưa chọn ảnh mẫu.
                 </div>
               )}
 
               {/* Inline Library Sample Picker */}
               {showLibraryPicker && (
-                <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900/70 p-3">
+                <div className="space-y-2.5 rounded-xl border border-zinc-800 bg-zinc-900/70 p-2.5 sm:space-y-3 sm:p-3">
                   <div className="flex flex-col gap-2">
                     <div className="relative flex-1">
-                      <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500" />
+                      <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500" />
                       <input
                         type="text"
                         value={libraryQuery}
                         onChange={(e) => setLibraryQuery(e.target.value)}
-                        placeholder="Tìm ảnh mẫu theo tên, từ khóa..."
-                        className="h-9 w-full rounded-lg border border-zinc-700 bg-zinc-950 pl-8 pr-3 text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-blue-500 focus:outline-none"
+                        placeholder="Tìm ảnh mẫu..."
+                        className="h-8 w-full rounded-lg border border-zinc-700 bg-zinc-950 pl-8 pr-2.5 text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-blue-500 focus:outline-none sm:h-9"
                       />
                     </div>
                     <select
                       value={libraryCatFilter}
                       onChange={(e) => setLibraryCatFilter(e.target.value)}
                       aria-label="Lọc danh mục ảnh mẫu"
-                      className="h-9 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-2.5 text-xs text-zinc-100 focus:border-blue-500 focus:outline-none"
+                      className="h-8 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-2 text-xs text-zinc-100 focus:border-blue-500 focus:outline-none sm:h-9 sm:px-2.5"
                     >
                       <option value="all">Tất cả danh mục</option>
                       {categories.map((cat) => (
@@ -556,7 +556,7 @@ export function OrderModal({
                       Không tìm thấy ảnh mẫu nào phù hợp.
                     </p>
                   ) : (
-                    <div className="grid max-h-56 grid-cols-3 gap-2 overflow-y-auto pr-1">
+                    <div className="grid max-h-48 grid-cols-2 gap-1.5 overflow-y-auto pr-1 sm:max-h-56 sm:grid-cols-3 sm:gap-2">
                       {filteredLibraryImages.map((img) => {
                         const isPicked = selectedLibraryIds.includes(img.id);
                         return (
@@ -596,47 +596,177 @@ export function OrderModal({
               )}
             </div>
 
-            {/* Right Side: Order Info Fields */}
-            <div className="space-y-4 p-4 sm:min-h-0 sm:overflow-y-auto sm:p-5">
-              {/* Customer Info */}
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <div>
-                <label
-                  htmlFor="order-customer-name"
-                  className="mb-1.5 block text-xs font-semibold text-zinc-300"
-                >
-                  Tên khách hàng <span className="text-rose-400">*</span>
-                </label>
-                <input
-                  id="order-customer-name"
-                  type="text"
-                  value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                  placeholder="Ví dụ: Chị Minh Anh"
-                  className="h-10 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-blue-500 focus:outline-none"
-                />
+            {/* Right Side Wrapper: `contents` on mobile puts Customer Info next to Sample Images & Remaining Info below */}
+            <div className="contents sm:col-start-2 sm:row-start-1 sm:block sm:min-h-0 sm:space-y-4 sm:overflow-y-auto sm:p-5">
+              {/* Top Right Pane: Customer Name, Phone & Pickup Time (next to Sample Images on mobile portrait) */}
+              <div className="col-start-2 row-start-1 flex flex-col justify-start gap-3 border-b border-zinc-800 p-3 sm:gap-4 sm:border-b-0 sm:p-0">
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 lg:gap-4">
+                  <div>
+                    <label
+                      htmlFor="order-customer-name"
+                      className="mb-1.5 block text-xs font-semibold text-zinc-300"
+                    >
+                      Tên khách hàng <span className="text-rose-400">*</span>
+                    </label>
+                    <input
+                      id="order-customer-name"
+                      type="text"
+                      value={customerName}
+                      onChange={(e) => setCustomerName(e.target.value)}
+                      placeholder="Ví dụ: Chị Minh Anh"
+                      className="h-9 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-blue-500 focus:outline-none sm:h-10"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="order-customer-phone"
+                      className="mb-1.5 block text-xs font-semibold text-zinc-300"
+                    >
+                      Số điện thoại <span className="text-rose-400">*</span>
+                    </label>
+                    <input
+                      id="order-customer-phone"
+                      type="tel"
+                      inputMode="tel"
+                      value={customerPhone}
+                      onChange={(e) => setCustomerPhone(e.target.value)}
+                      placeholder="Ví dụ: 0912 345 678"
+                      className="tabular-nums h-9 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-blue-500 focus:outline-none sm:h-10"
+                    />
+                  </div>
+                </div>
+
+                {/* Pickup Time */}
+                <div className="min-w-0">
+                  <div className="mb-1.5 flex flex-wrap items-center justify-between gap-1.5">
+                    <span className="block text-xs font-semibold text-zinc-300">
+                      Thời gian lấy
+                    </span>
+                    <div className="flex flex-wrap items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPickupTime(combinePickupTime(todayKey, pickupClock))
+                        }
+                        className={`rounded-md border px-1.5 py-0.5 text-[11px] font-medium transition-colors sm:px-2 ${
+                          pickupDate === todayKey
+                            ? 'border-blue-500/70 bg-blue-600/20 text-blue-300'
+                            : 'border-zinc-700/80 bg-zinc-900 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
+                        }`}
+                      >
+                        Hôm nay
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPickupTime(combinePickupTime(tomorrowKey, pickupClock))
+                        }
+                        className={`rounded-md border px-1.5 py-0.5 text-[11px] font-medium transition-colors sm:px-2 ${
+                          pickupDate === tomorrowKey
+                            ? 'border-blue-500/70 bg-blue-600/20 text-blue-300'
+                            : 'border-zinc-700/80 bg-zinc-900 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
+                        }`}
+                      >
+                        Ngày mai
+                      </button>
+                      {pickupTime && (
+                        <button
+                          type="button"
+                          onClick={() => setPickupTime('')}
+                          className="rounded-md px-1.5 py-0.5 text-[11px] font-medium text-zinc-500 transition-colors hover:bg-zinc-900 hover:text-rose-300"
+                        >
+                          Xóa
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-2.5">
+                    <div className="relative flex h-9 min-w-0 items-center justify-between gap-2 overflow-hidden rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 text-sm transition-colors focus-within:border-blue-500 hover:border-zinc-600 sm:h-10 sm:px-3">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <Calendar className="h-4 w-4 shrink-0 text-zinc-400" />
+                        <span
+                          className={`tabular-nums truncate text-xs sm:text-sm ${
+                            pickupDate ? 'text-zinc-100' : 'text-zinc-500'
+                          }`}
+                        >
+                          {pickupDate ? formatDateKeyDisplay(pickupDate) : 'Chọn ngày'}
+                        </span>
+                      </span>
+                      <input
+                        id="order-pickup-date"
+                        type="date"
+                        value={pickupDate}
+                        aria-label="Chọn ngày lấy hàng"
+                        onClick={(e) => {
+                          try {
+                            (
+                              e.currentTarget as HTMLInputElement & {
+                                showPicker?: () => void;
+                              }
+                            ).showPicker?.();
+                          } catch {
+                            // Ignore browsers that open native picker automatically
+                          }
+                        }}
+                        onChange={(e) => {
+                          const nextDate = e.target.value;
+                          if (!nextDate) {
+                            setPickupTime('');
+                            return;
+                          }
+                          setPickupTime(combinePickupTime(nextDate, pickupClock));
+                        }}
+                        className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                      />
+                    </div>
+
+                    <div className="relative flex h-9 min-w-0 items-center justify-between gap-2 overflow-hidden rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 text-sm transition-colors focus-within:border-blue-500 hover:border-zinc-600 sm:h-10 sm:px-3">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <Clock className="h-4 w-4 shrink-0 text-zinc-400" />
+                        <span
+                          className={`tabular-nums truncate text-xs sm:text-sm ${
+                            pickupClock ? 'text-zinc-100' : 'text-zinc-500'
+                          }`}
+                        >
+                          {pickupClock || 'Chọn giờ'}
+                        </span>
+                      </span>
+                      <input
+                        id="order-pickup-time"
+                        type="time"
+                        value={pickupClock}
+                        aria-label="Chọn giờ lấy hàng"
+                        onClick={(e) => {
+                          try {
+                            (
+                              e.currentTarget as HTMLInputElement & {
+                                showPicker?: () => void;
+                              }
+                            ).showPicker?.();
+                          } catch {
+                            // Ignore browsers that open native picker automatically
+                          }
+                        }}
+                        onChange={(e) => {
+                          const nextClock = e.target.value;
+                          if (!nextClock && !pickupDate) {
+                            setPickupTime('');
+                            return;
+                          }
+                          setPickupTime(combinePickupTime(pickupDate, nextClock));
+                        }}
+                        className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              <div>
-                <label
-                  htmlFor="order-customer-phone"
-                  className="mb-1.5 block text-xs font-semibold text-zinc-300"
-                >
-                  Số điện thoại <span className="text-rose-400">*</span>
-                </label>
-                <input
-                  id="order-customer-phone"
-                  type="tel"
-                  inputMode="tel"
-                  value={customerPhone}
-                  onChange={(e) => setCustomerPhone(e.target.value)}
-                  placeholder="Ví dụ: 0912 345 678"
-                  className="tabular-nums h-10 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-blue-500 focus:outline-none"
-                />
-              </div>
-            </div>
-
-            {/* Product Name */}
+              {/* Remaining Order Info (Full width below on mobile portrait; continuous in right column on tablet/desktop) */}
+              <div className="col-span-2 row-start-2 space-y-4 p-3.5 sm:p-0">
+              {/* Product Name */}
             <div>
               <label
                 htmlFor="order-product-name"
@@ -654,133 +784,8 @@ export function OrderModal({
               />
             </div>
 
-            {/* Pickup Time, Price & Deposit */}
+            {/* Price & Deposit */}
             <div className="space-y-4">
-              <div className="min-w-0">
-                <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
-                  <span className="block text-xs font-semibold text-zinc-300">
-                    Thời gian lấy
-                  </span>
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setPickupTime(combinePickupTime(todayKey, pickupClock))
-                      }
-                      className={`rounded-md border px-2 py-0.5 text-[11px] font-medium transition-colors ${
-                        pickupDate === todayKey
-                          ? 'border-blue-500/70 bg-blue-600/20 text-blue-300'
-                          : 'border-zinc-700/80 bg-zinc-900 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
-                      }`}
-                    >
-                      Hôm nay
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setPickupTime(combinePickupTime(tomorrowKey, pickupClock))
-                      }
-                      className={`rounded-md border px-2 py-0.5 text-[11px] font-medium transition-colors ${
-                        pickupDate === tomorrowKey
-                          ? 'border-blue-500/70 bg-blue-600/20 text-blue-300'
-                          : 'border-zinc-700/80 bg-zinc-900 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
-                      }`}
-                    >
-                      Ngày mai
-                    </button>
-                    {pickupTime && (
-                      <button
-                        type="button"
-                        onClick={() => setPickupTime('')}
-                        className="rounded-md px-1.5 py-0.5 text-[11px] font-medium text-zinc-500 transition-colors hover:bg-zinc-900 hover:text-rose-300"
-                      >
-                        Xóa
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2.5">
-                  <div className="relative flex h-10 min-w-0 items-center justify-between gap-2 overflow-hidden rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-sm transition-colors focus-within:border-blue-500 hover:border-zinc-600">
-                    <span className="flex min-w-0 items-center gap-2">
-                      <Calendar className="h-4 w-4 shrink-0 text-zinc-400" />
-                      <span
-                        className={`tabular-nums truncate ${
-                          pickupDate ? 'text-zinc-100' : 'text-zinc-500'
-                        }`}
-                      >
-                        {pickupDate ? formatDateKeyDisplay(pickupDate) : 'Chọn ngày'}
-                      </span>
-                    </span>
-                    <input
-                      id="order-pickup-date"
-                      type="date"
-                      value={pickupDate}
-                      aria-label="Chọn ngày lấy hàng"
-                      onClick={(e) => {
-                        try {
-                          (
-                            e.currentTarget as HTMLInputElement & {
-                              showPicker?: () => void;
-                            }
-                          ).showPicker?.();
-                        } catch {
-                          // Ignore browsers that open native picker automatically
-                        }
-                      }}
-                      onChange={(e) => {
-                        const nextDate = e.target.value;
-                        if (!nextDate) {
-                          setPickupTime('');
-                          return;
-                        }
-                        setPickupTime(combinePickupTime(nextDate, pickupClock));
-                      }}
-                      className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                    />
-                  </div>
-
-                  <div className="relative flex h-10 min-w-0 items-center justify-between gap-2 overflow-hidden rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-sm transition-colors focus-within:border-blue-500 hover:border-zinc-600">
-                    <span className="flex min-w-0 items-center gap-2">
-                      <Clock className="h-4 w-4 shrink-0 text-zinc-400" />
-                      <span
-                        className={`tabular-nums truncate ${
-                          pickupClock ? 'text-zinc-100' : 'text-zinc-500'
-                        }`}
-                      >
-                        {pickupClock || 'Chọn giờ'}
-                      </span>
-                    </span>
-                    <input
-                      id="order-pickup-time"
-                      type="time"
-                      value={pickupClock}
-                      aria-label="Chọn giờ lấy hàng"
-                      onClick={(e) => {
-                        try {
-                          (
-                            e.currentTarget as HTMLInputElement & {
-                              showPicker?: () => void;
-                            }
-                          ).showPicker?.();
-                        } catch {
-                          // Ignore browsers that open native picker automatically
-                        }
-                      }}
-                      onChange={(e) => {
-                        const nextClock = e.target.value;
-                        if (!nextClock && !pickupDate) {
-                          setPickupTime('');
-                          return;
-                        }
-                        setPickupTime(combinePickupTime(pickupDate, nextClock));
-                      }}
-                      className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                    />
-                  </div>
-                </div>
-              </div>
-
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="min-w-0">
                   <label
@@ -917,6 +922,7 @@ export function OrderModal({
               </div>
             )}
 
+              </div>
             </div>
           </div>
 
