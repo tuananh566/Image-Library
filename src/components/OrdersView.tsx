@@ -435,40 +435,51 @@ export function OrdersView({
                         : 'border-zinc-800 bg-zinc-900/60 hover:border-zinc-700'
                   }`}
                 >
-                  {/* Sample Image: always 1:1 square */}
-                  {primarySample ? (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setPreviewUrl({
-                          url: primarySample.fullUrl,
-                          title: primarySample.title || order.productName,
-                        });
-                      }}
-                      title="Nhấn để phóng to ảnh mẫu"
-                      className={`group relative col-start-1 row-start-1 aspect-square w-full self-start overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 sm:row-span-3 sm:self-center ${dimContentClass}`}
-                    >
-                      <img
-                        src={primarySample.thumbnailUrl}
-                        alt={order.productName}
-                        loading="lazy"
-                        referrerPolicy="no-referrer"
-                        className="absolute inset-0 h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
-                      />
-                      {order.sampleImages.length > 1 && (
-                        <span className="tabular-nums absolute bottom-1.5 right-1.5 rounded bg-zinc-950/85 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-100">
-                          +{order.sampleImages.length - 1}
-                        </span>
-                      )}
-                    </button>
-                  ) : (
-                    <div
-                      className={`col-start-1 row-start-1 flex aspect-square w-full items-center justify-center self-start rounded-lg border border-zinc-800 bg-zinc-950 text-zinc-600 sm:row-span-3 sm:self-center ${dimContentClass}`}
-                    >
-                      <ImageIcon className="h-7 w-7" />
+                  {/* Sample Image (+ Creation Time below on portrait tablet) */}
+                  <div
+                    className={`col-start-1 row-start-1 flex w-full flex-col gap-1.5 self-start sm:row-span-3 sm:self-center ${dimContentClass}`}
+                  >
+                    {primarySample ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPreviewUrl({
+                            url: primarySample.fullUrl,
+                            title: primarySample.title || order.productName,
+                          });
+                        }}
+                        title="Nhấn để phóng to ảnh mẫu"
+                        className="group relative aspect-square w-full overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950"
+                      >
+                        <img
+                          src={primarySample.thumbnailUrl}
+                          alt={order.productName}
+                          loading="lazy"
+                          referrerPolicy="no-referrer"
+                          className="absolute inset-0 h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
+                        />
+                        {order.sampleImages.length > 1 && (
+                          <span className="tabular-nums absolute bottom-1.5 right-1.5 rounded bg-zinc-950/85 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-100">
+                            +{order.sampleImages.length - 1}
+                          </span>
+                        )}
+                      </button>
+                    ) : (
+                      <div className="flex aspect-square w-full items-center justify-center rounded-lg border border-zinc-800 bg-zinc-950 text-zinc-600">
+                        <ImageIcon className="h-7 w-7" />
+                      </div>
+                    )}
+
+                    <div className="hidden rounded-md border border-zinc-800/80 bg-zinc-950/70 px-2 py-1 text-center text-[11px] leading-tight text-zinc-400 sm:portrait:block">
+                      <span className="block text-[10px] font-medium text-zinc-500">
+                        Tạo đơn lúc
+                      </span>
+                      <span className="tabular-nums block font-medium text-zinc-300">
+                        {formatDateTime(order.createdAt)}
+                      </span>
                     </div>
-                  )}
+                  </div>
 
                   {/* Top: Product Name, Order Meta, Customer Info & Ready Tick */}
                   <div className="col-start-2 row-start-1 min-w-0 space-y-1.5">
@@ -480,8 +491,10 @@ export function OrdersView({
                           </h3>
                           <span className="tabular-nums shrink-0 text-[11px] text-zinc-400">
                             <span className="font-mono text-zinc-300">{order.orderCode}</span>
-                            <span aria-hidden="true"> · </span>
-                            <span>{formatDateTime(order.createdAt)}</span>
+                            <span className="sm:portrait:hidden">
+                              <span aria-hidden="true"> · </span>
+                              <span>{formatDateTime(order.createdAt)}</span>
+                            </span>
                           </span>
                         </div>
 
@@ -804,7 +817,7 @@ export function OrdersView({
                 >
                   {selectedOrder.productName}
                 </h2>
-                <p className="tabular-nums text-xs text-zinc-400">
+                <p className="tabular-nums text-xs text-zinc-400 sm:portrait:hidden">
                   Tạo lúc: {formatDateTime(selectedOrder.createdAt)}
                   {selectedOrder.updatedAt > selectedOrder.createdAt + 1000 && (
                     <>
@@ -910,6 +923,19 @@ export function OrdersView({
                     <span>Không có ảnh mẫu</span>
                   </div>
                 )}
+
+                <div className="hidden rounded-xl border border-zinc-800/80 bg-zinc-950/60 px-3 py-2 text-xs text-zinc-400 sm:portrait:block">
+                  <p className="tabular-nums">
+                    <span className="font-medium text-zinc-500">Tạo lúc: </span>
+                    <span className="text-zinc-200">{formatDateTime(selectedOrder.createdAt)}</span>
+                  </p>
+                  {selectedOrder.updatedAt > selectedOrder.createdAt + 1000 && (
+                    <p className="tabular-nums mt-0.5">
+                      <span className="font-medium text-zinc-500">Cập nhật: </span>
+                      <span className="text-zinc-300">{formatDateTime(selectedOrder.updatedAt)}</span>
+                    </p>
+                  )}
+                </div>
               </div>
 
               {/* Right Side Wrapper: `contents` on mobile puts Customer Info next to Sample Image & Remaining Info below */}
