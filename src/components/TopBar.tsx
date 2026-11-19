@@ -114,8 +114,8 @@ export function TopBar({
   const tomorrowKey = shiftDateKey(todayKey, 1);
 
   return (
-    <header className="sticky top-0 z-30 h-12 shrink-0 border-b border-zinc-800 bg-zinc-950/95 backdrop-blur-sm">
-      <div className="relative mx-auto flex h-full max-w-[1600px] items-center justify-between gap-1.5 px-3 sm:gap-2 sm:px-6">
+    <header className="sticky top-0 z-30 shrink-0 border-b border-zinc-800 bg-zinc-950/95 pt-[env(safe-area-inset-top)] backdrop-blur-sm">
+      <div className="relative mx-auto flex h-12 max-w-[1600px] items-center justify-between gap-1.5 px-3 sm:gap-2 sm:px-6">
         {/* Top-Left Capsule: Menu (3 lines) on left, Back arrow on right when inside a category or inside-opened orders */}
         <div className="z-10 inline-flex h-9 shrink-0 items-center rounded-full border border-zinc-800 bg-zinc-900/80 p-1">
           {onToggleMobileSidebar && (
@@ -189,7 +189,7 @@ export function TopBar({
               <div
                 role="menu"
                 aria-label="Bộ lọc đơn hàng"
-                className="fixed left-1/2 top-13 z-50 w-[min(calc(100vw-2rem),20rem)] -translate-x-1/2 rounded-2xl border border-zinc-800 bg-zinc-950/98 p-1.5 shadow-2xl backdrop-blur-md sm:absolute sm:top-full sm:mt-2 sm:w-80"
+                className="fixed left-1/2 top-[calc(3.25rem+env(safe-area-inset-top))] z-50 w-[min(calc(100vw-2rem),20rem)] -translate-x-1/2 rounded-2xl border border-zinc-800 bg-zinc-950/98 p-1.5 shadow-2xl backdrop-blur-md sm:absolute sm:top-full sm:mt-2 sm:w-80"
               >
                 <div className="px-2.5 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
                   Hiển thị đơn hàng
