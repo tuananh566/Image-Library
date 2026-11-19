@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { execFile } from 'child_process';
 import crypto from 'crypto';
 import express from 'express';
 import type { NextFunction, Request, Response } from 'express';
@@ -7,7 +8,10 @@ import fsp from 'fs/promises';
 import multer from 'multer';
 import os from 'os';
 import path from 'path';
+import { promisify } from 'util';
 import { createServer as createViteServer } from 'vite';
+
+const execFileAsync = promisify(execFile);
 
 interface CategoryRecord {
   id: string;
@@ -81,6 +85,10 @@ const THUMBS_DIR = path.join(DATA_DIR, 'thumbs');
 const ORDER_IMAGES_DIR = path.join(DATA_DIR, 'order-images');
 const VAULT_FILE = path.join(DATA_DIR, 'vault.json');
 const TRUSTED_DEVICES_FILE = path.join(DATA_DIR, 'trusted-devices.json');
+const UPDATE_STATE_FILE = path.join(DATA_DIR, 'update-state.json');
+const PRE_UPDATE_BACKUP_DIR = path.join(DATA_DIR, 'pre-update-backups');
+const DEFAULT_GITHUB_REPO = process.env.GITHUB_REPO || 'tuananh566/Image-Library';
+const DEFAULT_GITHUB_BRANCH = process.env.GITHUB_BRANCH || 'main';
 const DEVICE_VERIFY_CODE = process.env.DEVICE_VERIFY_CODE || '0358093866';
 const DEVICE_TOKEN_COOKIE = 'khoanh_device_token';
 
@@ -436,6 +444,402 @@ function base64DataUrlToBuffer(dataUrl: string): { buffer: Buffer; mimeType: str
   };
 }
 
+interface UpdateStateRecord {
+  repo: string;
+  branch: string;
+  githubToken?: string;
+  lastCommitSha?: string;
+  lastCommitMessage?: string;
+  lastCommitDate?: string;
+  updatedAt?: number;
+}
+
+interface GithubCommitInfo {
+  sha: string;
+  shortSha: string;
+  message: string;
+  date: string;
+  author: string;
+}
+
+let isGithubUpdating = false;
+
+function isValidGithubRepo(repo: string): boolean {
+  return /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/.test(repo);
+}
+
+function isValidGithubBranch(branch: string): boolean {
+  return (
+    /^[a-zA-Z0-9._/-]+$/.test(branch) &&
+    !branch.includes('..') &&
+    !branch.startsWith('/') &&
+    !branch.endsWith('/')
+  );
+}
+
+function parseGithubRepoFromRemote(remoteUrl: string): string | null {
+  const trimmed = remoteUrl.trim();
+  const httpsMatch = /github\.com\/([^/]+\/[^/]+?)(?:\.git)?\/?$/i.exec(trimmed);
+  if (httpsMatch && isValidGithubRepo(httpsMatch[1])) return httpsMatch[1];
+  const sshMatch = /github\.com:([^/]+\/[^/]+?)(?:\.git)?$/i.exec(trimmed);
+  if (sshMatch && isValidGithubRepo(sshMatch[1])) return sshMatch[1];
+  return null;
+}
+
+async function readUpdateState(): Promise<UpdateStateRecord> {
+  try {
+    if (!fs.existsSync(UPDATE_STATE_FILE)) {
+      return { repo: DEFAULT_GITHUB_REPO, branch: DEFAULT_GITHUB_BRANCH };
+    }
+    const raw = await fsp.readFile(UPDATE_STATE_FILE, 'utf8');
+    const parsed = JSON.parse(raw) as Partial<UpdateStateRecord>;
+    return {
+      repo:
+        parsed.repo && isValidGithubRepo(parsed.repo)
+          ? parsed.repo
+          : DEFAULT_GITHUB_REPO,
+      branch:
+        parsed.branch && isValidGithubBranch(parsed.branch)
+          ? parsed.branch
+          : DEFAULT_GITHUB_BRANCH,
+      githubToken: typeof parsed.githubToken === 'string' ? parsed.githubToken : undefined,
+      lastCommitSha: parsed.lastCommitSha,
+      lastCommitMessage: parsed.lastCommitMessage,
+      lastCommitDate: parsed.lastCommitDate,
+      updatedAt: parsed.updatedAt,
+    };
+  } catch {
+    return { repo: DEFAULT_GITHUB_REPO, branch: DEFAULT_GITHUB_BRANCH };
+  }
+}
+
+async function writeUpdateState(state: UpdateStateRecord): Promise<void> {
+  await fsp.mkdir(DATA_DIR, { recursive: true });
+  const tmpFile = `${UPDATE_STATE_FILE}.${process.pid}.${Date.now()}.tmp`;
+  await fsp.writeFile(tmpFile, JSON.stringify(state, null, 2), { encoding: 'utf8', mode: 0o600 });
+  await fsp.rename(tmpFile, UPDATE_STATE_FILE);
+}
+
+function getEffectiveGithubToken(savedState: UpdateStateRecord): {
+  token: string;
+  source: 'env' | 'saved' | 'none';
+} {
+  const envToken = (process.env.GITHUB_TOKEN || '').trim();
+  if (envToken) return { token: envToken, source: 'env' };
+  const savedToken = (savedState.githubToken || '').trim();
+  if (savedToken) return { token: savedToken, source: 'saved' };
+  return { token: '', source: 'none' };
+}
+
+async function hashFileIfExists(filePath: string): Promise<string> {
+  try {
+    const buf = await fsp.readFile(filePath);
+    return crypto.createHash('sha256').update(buf).digest('hex');
+  } catch {
+    return '';
+  }
+}
+
+async function detectLocalRepoState(overrideRepo?: string, overrideBranch?: string) {
+  const cwd = process.cwd();
+  const hasGit = fs.existsSync(path.join(cwd, '.git'));
+  const saved = await readUpdateState();
+
+  let repo = saved.repo || DEFAULT_GITHUB_REPO;
+  let branch = saved.branch || DEFAULT_GITHUB_BRANCH;
+  let currentCommit: GithubCommitInfo | null = saved.lastCommitSha
+    ? {
+        sha: saved.lastCommitSha,
+        shortSha: saved.lastCommitSha.slice(0, 7),
+        message: saved.lastCommitMessage || '',
+        date: saved.lastCommitDate || '',
+        author: '',
+      }
+    : null;
+
+  if (hasGit) {
+    try {
+      const { stdout: remoteOut } = await execFileAsync(
+        'git',
+        ['remote', 'get-url', 'origin'],
+        { cwd, timeout: 5000 }
+      );
+      const parsedRepo = parseGithubRepoFromRemote(remoteOut);
+      if (parsedRepo) repo = parsedRepo;
+    } catch {
+      // Ignore if origin is not set
+    }
+
+    try {
+      const { stdout: branchOut } = await execFileAsync(
+        'git',
+        ['rev-parse', '--abbrev-ref', 'HEAD'],
+        { cwd, timeout: 5000 }
+      );
+      const b = branchOut.trim();
+      if (b && b !== 'HEAD' && isValidGithubBranch(b)) {
+        branch = b;
+      }
+    } catch {
+      // Ignore
+    }
+
+    try {
+      const { stdout: logOut } = await execFileAsync(
+        'git',
+        ['log', '-1', '--format=%H||%s||%cI||%an'],
+        { cwd, timeout: 5000 }
+      );
+      const [sha, message, date, author] = logOut.trim().split('||');
+      if (sha) {
+        currentCommit = {
+          sha,
+          shortSha: sha.slice(0, 7),
+          message: message || '',
+          date: date || '',
+          author: author || '',
+        };
+      }
+    } catch {
+      // Ignore
+    }
+  }
+
+  if (overrideRepo && overrideRepo.trim()) {
+    const cleanRepo = overrideRepo.trim().replace(/^https?:\/\/github\.com\//i, '').replace(/\.git$/i, '').replace(/\/+$/, '');
+    if (!isValidGithubRepo(cleanRepo)) {
+      throw new Error('Tên repository GitHub không hợp lệ (định dạng: owner/repo).');
+    }
+    repo = cleanRepo;
+  }
+
+  if (overrideBranch && overrideBranch.trim()) {
+    const cleanBranch = overrideBranch.trim();
+    if (!isValidGithubBranch(cleanBranch)) {
+      throw new Error('Tên nhánh (branch) không hợp lệ.');
+    }
+    branch = cleanBranch;
+  }
+
+  return {
+    hasGit,
+    repo,
+    branch,
+    currentCommit,
+    savedState: saved,
+  };
+}
+
+async function fetchLatestGithubCommit(
+  repo: string,
+  branch: string,
+  token?: string
+): Promise<GithubCommitInfo> {
+  const headers: Record<string, string> = {
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'KhoAnh-Server-Updater',
+  };
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const res = await fetch(
+    `https://api.github.com/repos/${repo}/commits/${encodeURIComponent(branch)}`,
+    { headers }
+  );
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => '');
+    if (res.status === 404) {
+      throw new Error(
+        token
+          ? `Không tìm thấy repo "${repo}" hoặc nhánh "${branch}" (hoặc Token chưa có quyền đọc repo này).`
+          : `Không tìm thấy repo "${repo}" hoặc nhánh "${branch}". Nếu repo đang để Private, hãy thêm GitHub Token.`
+      );
+    }
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('GitHub Token không hợp lệ, đã hết hạn hoặc thiếu quyền đọc repo (Contents: Read-only).');
+    }
+    throw new Error(`Không thể kết nối GitHub (${res.status}): ${errBody.slice(0, 140)}`);
+  }
+
+  const data = (await res.json()) as {
+    sha?: string;
+    commit?: {
+      message?: string;
+      author?: { name?: string; date?: string };
+      committer?: { date?: string };
+    };
+  };
+  const sha = String(data.sha || '');
+  if (!sha) {
+    throw new Error('Phản hồi từ GitHub không có mã commit hợp lệ.');
+  }
+  const fullMsg = String(data.commit?.message || '');
+  return {
+    sha,
+    shortSha: sha.slice(0, 7),
+    message: fullMsg.split('\n')[0] || '',
+    date: String(data.commit?.committer?.date || data.commit?.author?.date || ''),
+    author: String(data.commit?.author?.name || ''),
+  };
+}
+
+async function createPreUpdateDataSnapshot(): Promise<void> {
+  await ensureStorageReady();
+  await fsp.mkdir(PRE_UPDATE_BACKUP_DIR, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const snapDir = path.join(PRE_UPDATE_BACKUP_DIR, stamp);
+  await fsp.mkdir(snapDir, { recursive: true });
+
+  await withVaultLock(async (vault) => {
+    await fsp.writeFile(
+      path.join(snapDir, 'vault.json'),
+      JSON.stringify(vault, null, 2),
+      'utf8'
+    );
+    return { result: true };
+  });
+
+  await withDevicesLock(async (devicesFile) => {
+    await fsp.writeFile(
+      path.join(snapDir, 'trusted-devices.json'),
+      JSON.stringify(devicesFile, null, 2),
+      'utf8'
+    );
+    return { result: true };
+  });
+
+  // Keep only the 3 most recent snapshots
+  const entries = await fsp.readdir(PRE_UPDATE_BACKUP_DIR, { withFileTypes: true });
+  const dirs = entries
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name)
+    .sort()
+    .reverse();
+  for (const oldDir of dirs.slice(3)) {
+    await fsp.rm(path.join(PRE_UPDATE_BACKUP_DIR, oldDir), { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+function getProtectedRootNames(cwd: string): Set<string> {
+  const protectedNames = new Set<string>([
+    '.git',
+    'node_modules',
+    'data',
+    'dist',
+    '.env',
+    '.env.local',
+    '.env.development',
+    '.env.production',
+  ]);
+  const relData = path.relative(cwd, DATA_DIR);
+  if (relData && !relData.startsWith('..') && !path.isAbsolute(relData)) {
+    const topSegment = relData.split(path.sep)[0];
+    if (topSegment) protectedNames.add(topSegment);
+  }
+  return protectedNames;
+}
+
+function isProtectedEnvFile(name: string): boolean {
+  return name === '.env' || (name.startsWith('.env.') && name !== '.env.example');
+}
+
+async function syncDirectoryContents(
+  srcDir: string,
+  destDir: string,
+  pruneDeleted: boolean,
+  protectedNames?: Set<string>
+): Promise<void> {
+  await fsp.mkdir(destDir, { recursive: true });
+  const srcEntries = await fsp.readdir(srcDir, { withFileTypes: true });
+  const srcNames = new Set(srcEntries.map((e) => e.name));
+
+  if (pruneDeleted) {
+    const destEntries = await fsp.readdir(destDir, { withFileTypes: true });
+    for (const destEntry of destEntries) {
+      if (protectedNames?.has(destEntry.name) || isProtectedEnvFile(destEntry.name)) continue;
+      if (!srcNames.has(destEntry.name)) {
+        await fsp.rm(path.join(destDir, destEntry.name), { recursive: true, force: true });
+      }
+    }
+  }
+
+  for (const entry of srcEntries) {
+    if (protectedNames?.has(entry.name) || isProtectedEnvFile(entry.name)) {
+      continue;
+    }
+    const srcPath = path.join(srcDir, entry.name);
+    const destPath = path.join(destDir, entry.name);
+    if (entry.isDirectory()) {
+      // Mirror src/ and public/ so deleted/renamed source files don't linger
+      const shouldPrune = pruneDeleted || (!protectedNames && (entry.name === 'src' || entry.name === 'public'));
+      await syncDirectoryContents(srcPath, destPath, shouldPrune);
+    } else if (entry.isFile()) {
+      await fsp.copyFile(srcPath, destPath);
+    }
+  }
+}
+
+async function downloadAndApplyGithubTarball(
+  repo: string,
+  branch: string,
+  token?: string
+): Promise<void> {
+  const cwd = process.cwd();
+  const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'khoanh-gh-update-'));
+  try {
+    const headers: Record<string, string> = {
+      'User-Agent': 'KhoAnh-Server-Updater',
+    };
+    let archiveUrl = `https://codeload.github.com/${repo}/tar.gz/refs/heads/${encodeURIComponent(branch)}`;
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+      headers.Accept = 'application/vnd.github+json';
+      archiveUrl = `https://api.github.com/repos/${repo}/tarball/${encodeURIComponent(branch)}`;
+    }
+
+    const res = await fetch(archiveUrl, { headers, redirect: 'follow' });
+    if (!res.ok) {
+      throw new Error(`Không thể tải mã nguồn từ GitHub (${res.status}).`);
+    }
+
+    const arrayBuf = await res.arrayBuffer();
+    const tgzPath = path.join(tempRoot, 'repo.tar.gz');
+    const extractDir = path.join(tempRoot, 'extracted');
+    await fsp.mkdir(extractDir, { recursive: true });
+    await fsp.writeFile(tgzPath, Buffer.from(arrayBuf));
+
+    await execFileAsync('tar', ['-xzf', tgzPath, '-C', extractDir], { timeout: 60_000 });
+
+    const extractedEntries = await fsp.readdir(extractDir, { withFileTypes: true });
+    const rootFolder = extractedEntries.find((e) => e.isDirectory());
+    if (!rootFolder) {
+      throw new Error('Không tìm thấy thư mục mã nguồn trong gói tải về từ GitHub.');
+    }
+
+    const sourceRoot = path.join(extractDir, rootFolder.name);
+    const protectedRootNames = getProtectedRootNames(cwd);
+
+    // Sync root files and directories without touching data/, node_modules/, .git/, dist/, or .env*
+    const rootEntries = await fsp.readdir(sourceRoot, { withFileTypes: true });
+    for (const entry of rootEntries) {
+      if (protectedRootNames.has(entry.name) || isProtectedEnvFile(entry.name)) {
+        continue;
+      }
+      const srcPath = path.join(sourceRoot, entry.name);
+      const destPath = path.join(cwd, entry.name);
+      if (entry.isDirectory()) {
+        const pruneChild = entry.name === 'src' || entry.name === 'public';
+        await syncDirectoryContents(srcPath, destPath, pruneChild);
+      } else if (entry.isFile()) {
+        await fsp.copyFile(srcPath, destPath);
+      }
+    }
+  } finally {
+    await fsp.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 async function startServer() {
   await ensureStorageReady();
   await readTrustedDevicesFile();
@@ -669,6 +1073,231 @@ async function startServer() {
       res.json({ ok: true, revokedCurrent: targetId === currentDeviceId });
     } catch (err) {
       next(err);
+    }
+  });
+
+  // Save or clear GitHub config (repo, branch, private token) on server
+  app.post('/api/system/github-config', express.json({ limit: '64kb' }), async (req, res, next) => {
+    try {
+      const body = (req.body || {}) as {
+        repo?: string;
+        branch?: string;
+        githubToken?: string;
+        clearToken?: boolean;
+      };
+      const local = await detectLocalRepoState(body.repo, body.branch);
+      const nextToken = body.clearToken
+        ? undefined
+        : typeof body.githubToken === 'string' && body.githubToken.trim()
+          ? body.githubToken.trim()
+          : local.savedState.githubToken;
+
+      const nextState: UpdateStateRecord = {
+        ...local.savedState,
+        repo: local.repo,
+        branch: local.branch,
+        ...(nextToken ? { githubToken: nextToken } : { githubToken: undefined }),
+      };
+      await writeUpdateState(nextState);
+      const tokenInfo = getEffectiveGithubToken(nextState);
+      res.json({
+        ok: true,
+        repo: nextState.repo,
+        branch: nextState.branch,
+        hasToken: Boolean(tokenInfo.token),
+        tokenSource: tokenInfo.source,
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Check GitHub update status (requires trusted device)
+  app.get('/api/system/github-status', async (req, res, next) => {
+    try {
+      const repoParam = typeof req.query.repo === 'string' ? req.query.repo : undefined;
+      const branchParam = typeof req.query.branch === 'string' ? req.query.branch : undefined;
+      const local = await detectLocalRepoState(repoParam, branchParam);
+      const tokenInfo = getEffectiveGithubToken(local.savedState);
+      let latestCommit: GithubCommitInfo | null = null;
+      let checkError: string | null = null;
+
+      try {
+        latestCommit = await fetchLatestGithubCommit(local.repo, local.branch, tokenInfo.token);
+      } catch (err) {
+        checkError = err instanceof Error ? err.message : 'Không thể kiểm tra GitHub.';
+      }
+
+      const [vault, devicesFile] = await Promise.all([
+        readVaultFile(),
+        readTrustedDevicesFile(),
+      ]);
+
+      const hasUpdate = Boolean(
+        latestCommit &&
+          (!local.currentCommit || local.currentCommit.sha !== latestCommit.sha)
+      );
+
+      res.json({
+        repo: local.repo,
+        branch: local.branch,
+        hasGit: local.hasGit,
+        hasToken: Boolean(tokenInfo.token),
+        tokenSource: tokenInfo.source,
+        currentCommit: local.currentCommit,
+        latestCommit,
+        hasUpdate,
+        checkError,
+        lastUpdatedAt: local.savedState.updatedAt || null,
+        preservedData: {
+          images: vault.images.length,
+          categories: vault.categories.length,
+          orders: (vault.orders || []).length,
+          devices: devicesFile.devices.length,
+        },
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Update application code from GitHub while preserving all server data (DATA_DIR)
+  app.post('/api/system/github-update', express.json({ limit: '64kb' }), async (req, res, next) => {
+    if (isGithubUpdating) {
+      res.status(409).json({
+        error: 'Hệ thống đang thực hiện cập nhật từ GitHub. Vui lòng đợi hoàn tất.',
+      });
+      return;
+    }
+
+    isGithubUpdating = true;
+    try {
+      const body = (req.body || {}) as {
+        repo?: string;
+        branch?: string;
+        githubToken?: string;
+      };
+      const local = await detectLocalRepoState(body.repo, body.branch);
+      const inlineToken = typeof body.githubToken === 'string' ? body.githubToken.trim() : '';
+      const tokenInfo = getEffectiveGithubToken(local.savedState);
+      const effectiveToken = inlineToken || tokenInfo.token;
+      const cwd = process.cwd();
+
+      // 1. Fetch latest commit metadata from GitHub first to ensure repo/branch exist
+      const latestCommit = await fetchLatestGithubCommit(local.repo, local.branch, effectiveToken);
+
+      // 2. Snapshot vault.json and trusted-devices.json inside DATA_DIR before touching code files
+      await createPreUpdateDataSnapshot();
+
+      const pkgHashBefore = await hashFileIfExists(path.join(cwd, 'package.json'));
+      const serverHashBefore = await hashFileIfExists(path.join(cwd, 'server.ts'));
+
+      // 3. Apply code update without touching DATA_DIR (uploads, thumbs, order-images, vault.json, trusted-devices.json) or .env*
+      if (local.hasGit) {
+        const expectedUrl = `https://github.com/${local.repo}.git`;
+        try {
+          const { stdout: currentRemote } = await execFileAsync(
+            'git',
+            ['remote', 'get-url', 'origin'],
+            { cwd, timeout: 5000 }
+          );
+          const currentParsed = parseGithubRepoFromRemote(currentRemote);
+          if (currentParsed !== local.repo) {
+            await execFileAsync('git', ['remote', 'set-url', 'origin', expectedUrl], {
+              cwd,
+              timeout: 5000,
+            });
+          }
+        } catch {
+          await execFileAsync('git', ['remote', 'add', 'origin', expectedUrl], {
+            cwd,
+            timeout: 5000,
+          }).catch(() => {});
+        }
+
+        const gitFetchArgs: string[] = [];
+        if (effectiveToken) {
+          const basicAuth = Buffer.from(`x-access-token:${effectiveToken}`, 'utf8').toString('base64');
+          gitFetchArgs.push('-c', `http.https://github.com/.extraheader=AUTHORIZATION: basic ${basicAuth}`);
+        }
+        gitFetchArgs.push('fetch', 'origin', local.branch);
+
+        await execFileAsync('git', gitFetchArgs, {
+          cwd,
+          timeout: 60_000,
+          env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+        });
+        await execFileAsync('git', ['reset', '--hard', `origin/${local.branch}`], {
+          cwd,
+          timeout: 30_000,
+        });
+      } else {
+        await downloadAndApplyGithubTarball(local.repo, local.branch, effectiveToken);
+      }
+
+      // 4. Reinstall npm dependencies if package.json changed
+      const pkgHashAfter = await hashFileIfExists(path.join(cwd, 'package.json'));
+      let npmInstalled = false;
+      if (pkgHashAfter && pkgHashAfter !== pkgHashBefore) {
+        await execFileAsync('npm', ['install', '--no-audit', '--no-fund'], {
+          cwd,
+          timeout: 180_000,
+        });
+        npmInstalled = true;
+      }
+
+      // 5. Rebuild dist if dist exists or running in production
+      let builtDist = false;
+      if (fs.existsSync(path.join(cwd, 'dist')) || process.env.NODE_ENV === 'production') {
+        await execFileAsync('npm', ['run', 'build'], {
+          cwd,
+          timeout: 180_000,
+        });
+        builtDist = true;
+      }
+
+      const serverHashAfter = await hashFileIfExists(path.join(cwd, 'server.ts'));
+      const serverChanged = Boolean(serverHashBefore && serverHashAfter && serverHashBefore !== serverHashAfter);
+
+      const now = Date.now();
+      await writeUpdateState({
+        ...local.savedState,
+        repo: local.repo,
+        branch: local.branch,
+        ...(inlineToken ? { githubToken: inlineToken } : {}),
+        lastCommitSha: latestCommit.sha,
+        lastCommitMessage: latestCommit.message,
+        lastCommitDate: latestCommit.date,
+        updatedAt: now,
+      });
+
+      // 6. Re-read data from DATA_DIR & refresh devices cache to verify everything is intact
+      const [vault, devicesFile] = await Promise.all([
+        readVaultFile(),
+        readTrustedDevicesFile(),
+      ]);
+
+      res.json({
+        ok: true,
+        repo: local.repo,
+        branch: local.branch,
+        method: local.hasGit ? 'git' : 'tarball',
+        commit: latestCommit,
+        npmInstalled,
+        builtDist,
+        serverChanged,
+        updatedAt: now,
+        preservedData: {
+          images: vault.images.length,
+          categories: vault.categories.length,
+          orders: (vault.orders || []).length,
+          devices: devicesFile.devices.length,
+        },
+      });
+    } catch (err) {
+      next(err);
+    } finally {
+      isGithubUpdating = false;
     }
   });
 

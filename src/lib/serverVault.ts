@@ -141,6 +141,18 @@ async function assertOk(res: Response): Promise<Response> {
   }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
+    try {
+      const parsed = JSON.parse(text) as { error?: string; message?: string };
+      if (parsed?.error) throw new Error(parsed.error);
+      if (parsed?.message) throw new Error(parsed.message);
+    } catch (e) {
+      if (e instanceof Error && e.message && !text.startsWith('{')) {
+        throw e;
+      }
+      if (e instanceof Error && text.startsWith('{') && e.message !== 'Unexpected end of JSON input') {
+        throw e;
+      }
+    }
     throw new Error(text || `HTTP ${res.status}`);
   }
   return res;
@@ -424,4 +436,97 @@ export async function syncLocalIndexedDbToServer(
   }
 
   return { syncedCategories, syncedImages };
+}
+
+export interface GithubCommitInfo {
+  sha: string;
+  shortSha: string;
+  message: string;
+  date: string;
+  author: string;
+}
+
+export interface GithubPreservedCounts {
+  images: number;
+  categories: number;
+  orders: number;
+  devices: number;
+}
+
+export interface GithubUpdateStatusResponse {
+  repo: string;
+  branch: string;
+  hasGit: boolean;
+  hasToken: boolean;
+  tokenSource: 'env' | 'saved' | 'none';
+  currentCommit: GithubCommitInfo | null;
+  latestCommit: GithubCommitInfo | null;
+  hasUpdate: boolean;
+  checkError: string | null;
+  lastUpdatedAt: number | null;
+  preservedData: GithubPreservedCounts;
+}
+
+export interface GithubUpdateResult {
+  ok: boolean;
+  repo: string;
+  branch: string;
+  method: 'git' | 'tarball';
+  commit: GithubCommitInfo;
+  npmInstalled: boolean;
+  builtDist: boolean;
+  serverChanged: boolean;
+  updatedAt: number;
+  preservedData: GithubPreservedCounts;
+}
+
+export async function fetchGithubUpdateStatus(
+  repo?: string,
+  branch?: string
+): Promise<GithubUpdateStatusResponse> {
+  const params = new URLSearchParams();
+  if (repo?.trim()) params.set('repo', repo.trim());
+  if (branch?.trim()) params.set('branch', branch.trim());
+  const qs = params.toString();
+  const res = await apiFetch(`/api/system/github-status${qs ? `?${qs}` : ''}`, {
+    cache: 'no-store',
+  });
+  return res.json();
+}
+
+export async function saveGithubConfig(input: {
+  repo?: string;
+  branch?: string;
+  githubToken?: string;
+  clearToken?: boolean;
+}): Promise<{
+  ok: boolean;
+  repo: string;
+  branch: string;
+  hasToken: boolean;
+  tokenSource: 'env' | 'saved' | 'none';
+}> {
+  const res = await apiFetch('/api/system/github-config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  return res.json();
+}
+
+export async function triggerGithubUpdate(
+  repo?: string,
+  branch?: string,
+  githubToken?: string
+): Promise<GithubUpdateResult> {
+  const res = await apiFetch('/api/system/github-update', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...(repo?.trim() ? { repo: repo.trim() } : {}),
+      ...(branch?.trim() ? { branch: branch.trim() } : {}),
+      ...(githubToken?.trim() ? { githubToken: githubToken.trim() } : {}),
+    }),
+  });
+  return res.json();
 }
