@@ -313,7 +313,7 @@ export function OrderModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/75 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[calc(0.75rem+var(--app-safe-top))] backdrop-blur-xs sm:p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/75 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[calc(0.75rem+var(--app-safe-top))] backdrop-blur-xs sm:px-4 sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pt-[calc(1rem+var(--app-safe-top))]"
       onClick={onClose}
     >
       <div
@@ -321,7 +321,7 @@ export function OrderModal({
         aria-modal="true"
         aria-labelledby="order-modal-title"
         onClick={(e) => e.stopPropagation()}
-        className="flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950 text-zinc-100 shadow-2xl sm:max-h-[92vh]"
+        className="flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950 text-zinc-100 shadow-2xl sm:max-h-[min(92vh,calc(100dvh-2rem-var(--app-safe-top)))]"
       >
         {/* Header */}
         <div className="flex shrink-0 items-center justify-between border-b border-zinc-800 px-4 py-3.5 sm:px-6 sm:py-4">
@@ -371,7 +371,6 @@ export function OrderModal({
                   value={customerName}
                   onChange={(e) => setCustomerName(e.target.value)}
                   placeholder="Ví dụ: Chị Minh Anh"
-                  autoFocus
                   className="h-10 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-blue-500 focus:outline-none"
                 />
               </div>

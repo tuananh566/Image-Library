@@ -1677,11 +1677,34 @@ async function startServer() {
 
         const now = Date.now();
         const orderId = crypto.randomUUID();
+        const dateParts = new Intl.DateTimeFormat('en-GB', {
+          timeZone: process.env.TZ || 'Asia/Ho_Chi_Minh',
+          day: '2-digit',
+          month: '2-digit',
+          year: '2-digit',
+        }).formatToParts(new Date(now));
+        const dd = dateParts.find((p) => p.type === 'day')?.value || '01';
+        const mm = dateParts.find((p) => p.type === 'month')?.value || '01';
+        const yy = dateParts.find((p) => p.type === 'year')?.value || '26';
+        const dateStamp = `${dd}${mm}${yy}`;
+        const codePrefix = `DH-${dateStamp}-`;
 
         const created = await withVaultLock(async (vault) => {
           const existingOrders = vault.orders || [];
-          const nextNum = existingOrders.length + 1;
-          const orderCode = `DH-${String(nextNum).padStart(4, '0')}`;
+          let maxDailySeq = 0;
+          for (const existing of existingOrders) {
+            if (existing.orderCode?.startsWith(codePrefix)) {
+              const seqPart = Number.parseInt(
+                existing.orderCode.slice(codePrefix.length),
+                10
+              );
+              if (Number.isFinite(seqPart) && seqPart > maxDailySeq) {
+                maxDailySeq = seqPart;
+              }
+            }
+          }
+          const nextNum = maxDailySeq + 1;
+          const orderCode = `${codePrefix}${String(nextNum).padStart(3, '0')}`;
           const record: ServerOrderRecord = {
             id: orderId,
             orderCode,
