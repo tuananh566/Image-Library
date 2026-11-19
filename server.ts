@@ -146,13 +146,26 @@ function resolveSafeChild(baseDir: string, fileName: string): string | null {
   return resolved;
 }
 
-async function ensureStorageReady(): Promise<void> {
-  await fsp.mkdir(DATA_DIR, { recursive: true });
-  await fsp.mkdir(UPLOADS_DIR, { recursive: true });
-  await fsp.mkdir(THUMBS_DIR, { recursive: true });
-  await fsp.mkdir(ORDER_IMAGES_DIR, { recursive: true });
+let storageDirsEnsured = false;
+let cachedVault: VaultDataFile | null = null;
+let cachedImageById = new Map<string, ServerImageRecord>();
 
-  if (!fs.existsSync(VAULT_FILE)) {
+function updateVaultCache(data: VaultDataFile): VaultDataFile {
+  cachedVault = data;
+  cachedImageById = new Map(data.images.map((img) => [img.id, img]));
+  return data;
+}
+
+async function ensureStorageReady(): Promise<void> {
+  if (!storageDirsEnsured) {
+    await fsp.mkdir(DATA_DIR, { recursive: true });
+    await fsp.mkdir(UPLOADS_DIR, { recursive: true });
+    await fsp.mkdir(THUMBS_DIR, { recursive: true });
+    await fsp.mkdir(ORDER_IMAGES_DIR, { recursive: true });
+    storageDirsEnsured = true;
+  }
+
+  if (!cachedVault && !fs.existsSync(VAULT_FILE)) {
     const initial: VaultDataFile = {
       version: 1,
       seeded: false,
@@ -165,26 +178,53 @@ async function ensureStorageReady(): Promise<void> {
 }
 
 async function readVaultFile(): Promise<VaultDataFile> {
+  if (cachedVault) {
+    return cachedVault;
+  }
   await ensureStorageReady();
+  if (cachedVault) {
+    return cachedVault;
+  }
   try {
     const raw = await fsp.readFile(VAULT_FILE, 'utf8');
     const parsed = JSON.parse(raw) as Partial<VaultDataFile>;
-    return {
+    return updateVaultCache({
       version: 1,
       seeded: Boolean(parsed.seeded),
       categories: Array.isArray(parsed.categories) ? parsed.categories : [],
       images: Array.isArray(parsed.images) ? parsed.images : [],
       orders: Array.isArray(parsed.orders) ? parsed.orders : [],
-    };
+    });
   } catch {
-    return { version: 1, seeded: false, categories: [], images: [], orders: [] };
+    return updateVaultCache({
+      version: 1,
+      seeded: false,
+      categories: [],
+      images: [],
+      orders: [],
+    });
   }
 }
 
+async function getCachedImageById(id: string): Promise<ServerImageRecord | undefined> {
+  if (!cachedVault) {
+    await readVaultFile();
+  }
+  return cachedImageById.get(id);
+}
+
 async function writeVaultFile(data: VaultDataFile): Promise<void> {
+  if (!storageDirsEnsured) {
+    await fsp.mkdir(DATA_DIR, { recursive: true });
+    await fsp.mkdir(UPLOADS_DIR, { recursive: true });
+    await fsp.mkdir(THUMBS_DIR, { recursive: true });
+    await fsp.mkdir(ORDER_IMAGES_DIR, { recursive: true });
+    storageDirsEnsured = true;
+  }
   const tmpFile = `${VAULT_FILE}.${process.pid}.${Date.now()}.tmp`;
-  await fsp.writeFile(tmpFile, JSON.stringify(data, null, 2), 'utf8');
+  await fsp.writeFile(tmpFile, JSON.stringify(data), 'utf8');
   await fsp.rename(tmpFile, VAULT_FILE);
+  updateVaultCache(data);
 }
 
 let writeQueue: Promise<unknown> = Promise.resolve();
@@ -1366,6 +1406,7 @@ async function startServer() {
       });
 
       // 6. Re-read data from DATA_DIR & refresh devices cache to verify everything is intact
+      cachedVault = null;
       const [vault, devicesFile] = await Promise.all([
         readVaultFile(),
         readTrustedDevicesFile(),
@@ -1475,8 +1516,7 @@ async function startServer() {
   // Serve image or thumbnail binaries
   app.get('/api/files/image/:id', async (req, res, next) => {
     try {
-      const vault = await readVaultFile();
-      const img = vault.images.find((i) => i.id === req.params.id);
+      const img = await getCachedImageById(req.params.id);
       if (!img) {
         res.status(404).json({ error: 'Image not found' });
         return;
@@ -1496,8 +1536,7 @@ async function startServer() {
 
   app.get('/api/files/thumb/:id', async (req, res, next) => {
     try {
-      const vault = await readVaultFile();
-      const img = vault.images.find((i) => i.id === req.params.id);
+      const img = await getCachedImageById(req.params.id);
       if (!img) {
         res.status(404).json({ error: 'Image not found' });
         return;

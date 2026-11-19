@@ -766,7 +766,7 @@ function ImageInspectorContent({
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-      className="fixed inset-0 z-50 flex overflow-hidden bg-zinc-950/90 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex overflow-hidden bg-zinc-950/95"
       role="dialog"
       aria-modal="true"
       aria-label={`Chi tiết ảnh ${image.title}`}
@@ -903,7 +903,7 @@ function ImageInspectorContent({
                       title={item.title}
                       aria-label={`Xem ${item.title}`}
                       aria-current={isActive ? 'true' : undefined}
-                      className={`h-10 w-10 shrink-0 overflow-hidden rounded-lg transition-all duration-150 sm:h-11 sm:w-11 ${
+                      className={`h-10 w-10 shrink-0 overflow-hidden rounded-lg transition-[transform,opacity,box-shadow] duration-150 sm:h-11 sm:w-11 ${
                         isActive
                           ? 'scale-105 opacity-100 ring-2 ring-white'
                           : 'opacity-55 hover:opacity-95'

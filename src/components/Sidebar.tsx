@@ -332,7 +332,7 @@ export function Sidebar({
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.2, ease: 'easeOut' }}
-                className="fixed inset-0 bg-zinc-950/50 backdrop-blur-xs"
+                className="fixed inset-0 bg-zinc-950/65"
                 onClick={onCloseMobile}
               />
               <motion.aside

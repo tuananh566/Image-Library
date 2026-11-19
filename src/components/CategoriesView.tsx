@@ -649,10 +649,10 @@ export function CategoriesView({
                       }
                     }
                   }}
-                  className={`group relative aspect-[4/3] w-full overflow-hidden rounded-lg border bg-zinc-100 transition-[transform,border-color,box-shadow,opacity] duration-150 focus-visible:outline-2 focus-visible:outline-blue-600 dark:bg-zinc-900 ${
+                  className={`group relative aspect-[4/3] w-full overflow-hidden rounded-lg border bg-zinc-100 [content-visibility:auto] [contain-intrinsic-size:auto_220px] transition-[transform,border-color,opacity] duration-150 focus-visible:outline-2 focus-visible:outline-blue-600 dark:bg-zinc-900 ${
                     isReorderMode
                       ? 'cursor-default'
-                      : 'cursor-pointer hover:-translate-y-0.5 hover:shadow-md active:scale-[0.97]'
+                      : 'cursor-pointer hover:-translate-y-0.5 active:scale-[0.97]'
                   } ${
                     canManage ? 'select-none [-webkit-touch-callout:none]' : ''
                   } ${
@@ -681,6 +681,7 @@ export function CategoriesView({
                       src={previewImages[0].thumbnailUrl}
                       alt={cat.name}
                       loading="lazy"
+                      decoding="async"
                       draggable={false}
                       className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
                     />
@@ -692,6 +693,7 @@ export function CategoriesView({
                           src={img.thumbnailUrl}
                           alt={img.title}
                           loading="lazy"
+                          decoding="async"
                           draggable={false}
                           className="h-full w-full object-cover"
                         />
@@ -703,6 +705,7 @@ export function CategoriesView({
                         src={previewImages[0].thumbnailUrl}
                         alt={previewImages[0].title}
                         loading="lazy"
+                        decoding="async"
                         draggable={false}
                         className="row-span-2 h-full w-full object-cover"
                       />
@@ -710,6 +713,7 @@ export function CategoriesView({
                         src={previewImages[1].thumbnailUrl}
                         alt={previewImages[1].title}
                         loading="lazy"
+                        decoding="async"
                         draggable={false}
                         className="h-full w-full object-cover"
                       />
@@ -717,6 +721,7 @@ export function CategoriesView({
                         src={previewImages[2].thumbnailUrl}
                         alt={previewImages[2].title}
                         loading="lazy"
+                        decoding="async"
                         draggable={false}
                         className="h-full w-full object-cover"
                       />
@@ -731,6 +736,7 @@ export function CategoriesView({
                               src={img.thumbnailUrl}
                               alt={img.title}
                               loading="lazy"
+                              decoding="async"
                               draggable={false}
                               className="h-full w-full object-cover"
                             />
@@ -824,7 +830,7 @@ export function CategoriesView({
                       }}
                       aria-label={`Chỉnh sửa ${cat.name}`}
                       title={`Chỉnh sửa ${cat.name}`}
-                      className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-lg bg-black/45 text-white backdrop-blur-xs transition-colors hover:bg-black/65 sm:right-2.5 sm:top-2.5 sm:h-8 sm:w-8"
+                      className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-lg bg-black/60 text-white transition-colors hover:bg-black/80 sm:right-2.5 sm:top-2.5 sm:h-8 sm:w-8"
                     >
                       <Pencil className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                     </button>
@@ -1171,7 +1177,7 @@ export function CategoriesView({
       {/* Edit / Delete Category Modal */}
       {editingCategory && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/60 p-4 backdrop-blur-xs"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/75 p-4"
           onClick={() => setEditingCategory(null)}
         >
           <div

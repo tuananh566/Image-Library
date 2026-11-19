@@ -79,8 +79,8 @@ type ViewTransitionState = {
 
 const VIEW_TRANSITION_VARIANTS = {
   initial: (vt: ViewTransitionState) => {
-    if (vt.mode === 'zoom-in') return { opacity: 0, scale: 0.78 };
-    if (vt.mode === 'zoom-out') return { opacity: 0, scale: 1.12 };
+    if (vt.mode === 'zoom-in') return { opacity: 0, scale: 0.94 };
+    if (vt.mode === 'zoom-out') return { opacity: 0, scale: 1.05 };
     return { opacity: 0, scale: 1 };
   },
   animate: {
@@ -88,8 +88,8 @@ const VIEW_TRANSITION_VARIANTS = {
     scale: 1,
   },
   exit: (vt: ViewTransitionState) => {
-    if (vt.mode === 'zoom-in') return { opacity: 0, scale: 1.12 };
-    if (vt.mode === 'zoom-out') return { opacity: 0, scale: 0.78 };
+    if (vt.mode === 'zoom-in') return { opacity: 0, scale: 1.04 };
+    if (vt.mode === 'zoom-out') return { opacity: 0, scale: 0.95 };
     return { opacity: 0, scale: 1 };
   },
 };
@@ -425,16 +425,40 @@ export default function App() {
     });
   }, [logoutAdmin, verifyCurrentDeviceStatus]);
 
+  const reloadInFlightRef = useRef<Promise<void> | null>(null);
+  const lastReloadDoneAtRef = useRef(0);
+  const lastFocusRefreshAtRef = useRef(0);
+  const localSyncEmptyRef = useRef(false);
+
   const reloadVault = useCallback(async () => {
-    const vault = await fetchServerVault();
-    setCategories(vault.categories);
-    setImages(vault.images);
-    setOrders(vault.orders || []);
-    const pending = await getPendingLocalSyncCount(
-      new Set(vault.categories.map((c) => c.id)),
-      new Set(vault.images.map((i) => i.id))
-    );
-    setPendingLocalSync(pending);
+    if (reloadInFlightRef.current) {
+      return reloadInFlightRef.current;
+    }
+
+    const task = (async () => {
+      try {
+        const vault = await fetchServerVault();
+        setCategories(vault.categories);
+        setImages(vault.images);
+        setOrders(vault.orders || []);
+        if (!localSyncEmptyRef.current) {
+          const pending = await getPendingLocalSyncCount(
+            new Set(vault.categories.map((c) => c.id)),
+            new Set(vault.images.map((i) => i.id))
+          );
+          if (pending.categories === 0 && pending.images === 0) {
+            localSyncEmptyRef.current = true;
+          }
+          setPendingLocalSync(pending);
+        }
+        lastReloadDoneAtRef.current = Date.now();
+      } finally {
+        reloadInFlightRef.current = null;
+      }
+    })();
+
+    reloadInFlightRef.current = task;
+    return task;
   }, []);
 
   useEffect(() => {
@@ -460,12 +484,22 @@ export default function App() {
   // Live cross-device sync via Server-Sent Events + window focus refresh
   useEffect(() => {
     if (deviceGateState !== 'trusted') return;
+    let sseReloadTimer: number | undefined;
     const eventSource = new EventSource(attachDeviceTokenToUrl('/api/events'));
     eventSource.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data) as { type?: string };
         if (msg.type === 'vault-updated') {
-          void reloadVault();
+          if (Date.now() - lastReloadDoneAtRef.current < 600) {
+            return;
+          }
+          if (sseReloadTimer !== undefined) {
+            window.clearTimeout(sseReloadTimer);
+          }
+          sseReloadTimer = window.setTimeout(() => {
+            sseReloadTimer = undefined;
+            void reloadVault();
+          }, 180);
         } else if (msg.type === 'devices-updated') {
           void verifyCurrentDeviceStatus();
         }
@@ -475,15 +509,20 @@ export default function App() {
     };
 
     const handleVisibilityOrFocus = () => {
-      if (document.visibilityState === 'visible') {
-        void verifyCurrentDeviceStatus();
-        void reloadVault();
-      }
+      if (document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      if (now - lastFocusRefreshAtRef.current < 2500) return;
+      lastFocusRefreshAtRef.current = now;
+      void verifyCurrentDeviceStatus();
+      void reloadVault();
     };
     window.addEventListener('focus', handleVisibilityOrFocus);
     document.addEventListener('visibilitychange', handleVisibilityOrFocus);
 
     return () => {
+      if (sseReloadTimer !== undefined) {
+        window.clearTimeout(sseReloadTimer);
+      }
       eventSource.close();
       window.removeEventListener('focus', handleVisibilityOrFocus);
       document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
@@ -954,7 +993,7 @@ export default function App() {
             )}
           <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
             <MotionConfig reducedMotion="user">
-              <AnimatePresence mode="popLayout" initial={false} custom={viewTransition}>
+              <AnimatePresence mode="wait" initial={false} custom={viewTransition}>
                 <motion.div
                   key={`${activeTab}:${filters.categoryId}`}
                   custom={viewTransition}
@@ -962,7 +1001,7 @@ export default function App() {
                   initial="initial"
                   animate="animate"
                   exit="exit"
-                  transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+                  transition={{ duration: 0.12, ease: [0.22, 1, 0.36, 1] }}
                   style={{
                     transformOrigin: `${viewTransition.originX} ${viewTransition.originY}`,
                   }}

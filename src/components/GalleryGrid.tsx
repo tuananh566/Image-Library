@@ -283,7 +283,7 @@ export function GalleryGrid({
           <article
             key={image.id}
             data-image-card={image.id}
-            className={`group relative overflow-hidden rounded-lg border bg-white transition-[transform,border-color,box-shadow] duration-150 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.97] dark:bg-zinc-950 ${
+            className={`group relative overflow-hidden rounded-lg border bg-white [content-visibility:auto] [contain-intrinsic-size:auto_180px] transition-[transform,border-color] duration-150 hover:-translate-y-0.5 active:scale-[0.97] dark:bg-zinc-950 ${
               isMasonry ? 'mb-1.5 break-inside-avoid md:portrait:mb-2 md:landscape:mb-2' : 'flex flex-col'
             } ${
               isSelected

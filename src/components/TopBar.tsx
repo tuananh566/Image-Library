@@ -114,7 +114,7 @@ export function TopBar({
   const tomorrowKey = shiftDateKey(todayKey, 1);
 
   return (
-    <header className="standalone-safe-top sticky top-0 z-30 shrink-0 border-b border-zinc-800 bg-zinc-950/95 backdrop-blur-sm">
+    <header className="standalone-safe-top sticky top-0 z-30 shrink-0 border-b border-zinc-800 bg-zinc-950">
       <div className="relative mx-auto flex h-15 max-w-[1600px] items-center justify-between gap-2 px-3 sm:h-16 sm:gap-2.5 sm:px-6">
         {/* Top-Left Control: Menu (3 lines) on left, Back arrow on right when inside a category or inside-opened orders */}
         <div className="z-10 inline-flex h-11 shrink-0 items-center rounded-xl border border-zinc-800 bg-zinc-900/80 p-1 sm:h-12">
