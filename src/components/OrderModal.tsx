@@ -42,6 +42,16 @@ function formatVndDigits(rawDigits: string): string {
   return digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 }
 
+function getCurrentLocalClock(date: Date = new Date()): string {
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+function getDefaultPickupTime(date: Date = new Date()): string {
+  return `${getLocalDateKey(date)}T${getCurrentLocalClock(date)}`;
+}
+
 function splitPickupTime(raw: string): { date: string; clock: string } {
   const trimmed = raw.trim();
   if (!trimmed) return { date: '', clock: '' };
@@ -60,8 +70,9 @@ function splitPickupTime(raw: string): { date: string; clock: string } {
 
 function combinePickupTime(date: string, clock: string): string {
   if (!date && !clock) return '';
-  const targetDate = date || getLocalDateKey();
-  const targetClock = clock || '09:00';
+  const now = new Date();
+  const targetDate = date || getLocalDateKey(now);
+  const targetClock = clock || getCurrentLocalClock(now);
   return `${targetDate}T${targetClock}`;
 }
 
@@ -136,7 +147,7 @@ export function OrderModal({
       setCustomerPhone('');
       setProductName(presetImage ? presetImage.title : '');
       setProductDescription(presetImage?.notes || '');
-      setPickupTime('');
+      setPickupTime(getDefaultPickupTime());
       setPriceDigits('');
       setDepositDigits('');
       setIsReady(false);
