@@ -96,6 +96,8 @@ interface TrustedDeviceRecord {
   id: string;
   tokenHash: string;
   label: string;
+  deviceName?: string;
+  systemInfo?: string;
   userAgent: string;
   fingerprint: string;
   createdAt: number;
@@ -370,10 +372,20 @@ function clearDeviceTokenCookie(req: Request, res: Response): void {
   res.setHeader('Set-Cookie', parts.join('; '));
 }
 
+function isGenericDeviceLabel(label: string): boolean {
+  return /^(Thiết bị|iPhone|iPad|Android|Mac|Windows|Linux)\s*·\s*(Trình duyệt|Edge|Opera|Chrome|Firefox|Safari)$/i.test(
+    label.trim()
+  );
+}
+
 function toPublicDevice(rec: TrustedDeviceRecord, currentDeviceId?: string) {
+  const systemInfo = rec.systemInfo || detectDeviceLabel(rec.userAgent);
+  const deviceName = (rec.deviceName || rec.label || systemInfo).trim();
   return {
     id: rec.id,
-    label: rec.label,
+    label: deviceName,
+    deviceName,
+    systemInfo,
     createdAt: rec.createdAt,
     lastSeenAt: rec.lastSeenAt,
     isCurrent: rec.id === currentDeviceId,
@@ -861,14 +873,27 @@ async function startServer() {
   app.post('/api/device/status', express.json({ limit: '64kb' }), async (req, res, next) => {
     try {
       const ua = String(req.headers['user-agent'] || '');
-      const body = (req.body || {}) as { deviceLabel?: string; fingerprint?: string };
-      const detectedLabel = detectDeviceLabel(ua, body.deviceLabel);
+      const body = (req.body || {}) as {
+        deviceLabel?: string;
+        deviceModel?: string;
+        systemSummary?: string;
+        fingerprint?: string;
+      };
+      const systemSummary =
+        String(body.systemSummary || '').trim().slice(0, 60) || detectDeviceLabel(ua);
+      const detectedModel = String(body.deviceModel || '').trim().slice(0, 80);
+      const detectedLabel =
+        String(body.deviceLabel || '').trim().slice(0, 80) ||
+        detectedModel ||
+        systemSummary;
       const token = extractDeviceToken(req);
 
       if (!token) {
         res.json({
           trusted: false,
           detectedLabel,
+          detectedModel: detectedModel || undefined,
+          systemSummary,
           reason: 'new_device',
         });
         return;
@@ -881,6 +906,8 @@ async function startServer() {
         res.json({
           trusted: false,
           detectedLabel,
+          detectedModel: detectedModel || undefined,
+          systemSummary,
           reason: 'revoked_or_unknown',
         });
         return;
@@ -888,13 +915,30 @@ async function startServer() {
 
       const now = Date.now();
       const ip = getClientIp(req);
+      const needsSystemUpgrade = !matched.systemInfo && Boolean(systemSummary);
+      const needsModelUpgrade =
+        !matched.deviceName &&
+        Boolean(detectedModel) &&
+        isGenericDeviceLabel(matched.label);
       let currentRecord = matched;
-      if (now - matched.lastSeenAt > 30_000 || matched.lastIp !== ip) {
+      if (
+        now - matched.lastSeenAt > 30_000 ||
+        matched.lastIp !== ip ||
+        needsSystemUpgrade ||
+        needsModelUpgrade
+      ) {
         currentRecord = await withDevicesLock(async (file) => {
           const found = file.devices.find((d) => d.id === matched.id);
           if (!found) return { result: matched };
+          const upgradedName =
+            !found.deviceName && detectedModel && isGenericDeviceLabel(found.label)
+              ? detectedModel
+              : found.deviceName || found.label;
           const updated: TrustedDeviceRecord = {
             ...found,
+            label: upgradedName,
+            deviceName: upgradedName,
+            systemInfo: found.systemInfo || systemSummary,
             lastSeenAt: now,
             lastIp: ip,
             userAgent: ua || found.userAgent,
@@ -912,7 +956,9 @@ async function startServer() {
       setDeviceTokenCookie(req, res, token);
       res.json({
         trusted: true,
-        detectedLabel: currentRecord.label,
+        detectedLabel: currentRecord.deviceName || currentRecord.label,
+        detectedModel: detectedModel || currentRecord.deviceName,
+        systemSummary: currentRecord.systemInfo || systemSummary,
         device: toPublicDevice(currentRecord, currentRecord.id),
       });
     } catch (err) {
@@ -935,6 +981,8 @@ async function startServer() {
       const body = (req.body || {}) as {
         code?: string;
         deviceLabel?: string;
+        deviceModel?: string;
+        systemSummary?: string;
         fingerprint?: string;
       };
       const code = String(body.code || '').trim();
@@ -960,13 +1008,19 @@ async function startServer() {
       const deviceId = crypto.randomUUID();
       const rawToken = `${deviceId}.${crypto.randomBytes(24).toString('hex')}`;
       const tokenHash = hashDeviceToken(rawToken);
-      const label = detectDeviceLabel(ua, body.deviceLabel);
+      const systemInfo =
+        String(body.systemSummary || '').trim().slice(0, 60) || detectDeviceLabel(ua);
+      const customName = String(body.deviceLabel || '').trim().slice(0, 80);
+      const modelName = String(body.deviceModel || '').trim().slice(0, 80);
+      const deviceName = customName || modelName || systemInfo;
       const fingerprint = String(body.fingerprint || '').slice(0, 200);
 
       const newRecord: TrustedDeviceRecord = {
         id: deviceId,
         tokenHash,
-        label,
+        label: deviceName,
+        deviceName,
+        systemInfo,
         userAgent: ua,
         fingerprint,
         createdAt: now,
@@ -1071,6 +1125,46 @@ async function startServer() {
       }
       broadcastEvent('devices-updated');
       res.json({ ok: true, revokedCurrent: targetId === currentDeviceId });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.patch('/api/devices/:id', express.json({ limit: '64kb' }), async (req, res, next) => {
+    try {
+      const targetId = req.params.id;
+      const currentDeviceId = (req as Request & { trustedDeviceId?: string }).trustedDeviceId;
+      const body = (req.body || {}) as { deviceName?: string };
+      const nextName = String(body.deviceName || '').trim().slice(0, 80);
+      if (!nextName) {
+        res.status(400).json({ error: 'Tên thiết bị không được để trống.' });
+        return;
+      }
+
+      const updated = await withDevicesLock(async (file) => {
+        const found = file.devices.find((d) => d.id === targetId);
+        if (!found) return { result: null };
+        const nextRec: TrustedDeviceRecord = {
+          ...found,
+          label: nextName,
+          deviceName: nextName,
+        };
+        return {
+          nextFile: {
+            ...file,
+            devices: file.devices.map((d) => (d.id === targetId ? nextRec : d)),
+          },
+          result: nextRec,
+        };
+      });
+
+      if (!updated) {
+        res.status(404).json({ error: 'Không tìm thấy thiết bị.' });
+        return;
+      }
+
+      broadcastEvent('devices-updated');
+      res.json({ device: toPublicDevice(updated, currentDeviceId) });
     } catch (err) {
       next(err);
     }

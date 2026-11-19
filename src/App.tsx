@@ -26,6 +26,7 @@ import {
   attachDeviceTokenToUrl,
   checkDeviceStatus,
   subscribeDeviceUnauthorized,
+  type TrustedDeviceInfo,
 } from './lib/deviceAuth';
 import {
   generateId,
@@ -99,6 +100,9 @@ export default function App() {
 
   const [deviceGateState, setDeviceGateState] = useState<'checking' | 'unverified' | 'trusted'>('checking');
   const [detectedDeviceLabel, setDetectedDeviceLabel] = useState('');
+  const [detectedDeviceModel, setDetectedDeviceModel] = useState('');
+  const [detectedSystemSummary, setDetectedSystemSummary] = useState('');
+  const [currentDevice, setCurrentDevice] = useState<TrustedDeviceInfo | null>(null);
   const [deviceDenyReason, setDeviceDenyReason] = useState<string | undefined>(undefined);
 
   const [isLoading, setIsLoading] = useState(true);
@@ -365,6 +369,9 @@ export default function App() {
     try {
       const status = await checkDeviceStatus();
       setDetectedDeviceLabel(status.detectedLabel);
+      setDetectedDeviceModel(status.detectedModel || '');
+      setDetectedSystemSummary(status.systemSummary || '');
+      setCurrentDevice(status.device || null);
       setDeviceDenyReason(status.reason);
       setDeviceGateState(status.trusted ? 'trusted' : 'unverified');
     } catch {
@@ -700,10 +707,13 @@ export default function App() {
     return (
       <DeviceVerificationGate
         detectedLabel={detectedDeviceLabel}
+        detectedModel={detectedDeviceModel}
+        systemSummary={detectedSystemSummary}
         reason={deviceDenyReason}
         onVerified={() => {
           setIsLoading(true);
           setDeviceGateState('trusted');
+          void verifyCurrentDeviceStatus();
         }}
       />
     );
@@ -1068,6 +1078,8 @@ export default function App() {
         onClose={() => setIsSettingsOpen(false)}
         isAdmin={isAdmin}
         adminExpiresAt={adminExpiresAt}
+        currentDevice={currentDevice}
+        onCurrentDeviceUpdated={(updated) => setCurrentDevice(updated)}
         onAuthenticateAdmin={(password) => {
           if (password.trim() === 'admin') {
             setAdminExpiresAt(grantAdminSession());

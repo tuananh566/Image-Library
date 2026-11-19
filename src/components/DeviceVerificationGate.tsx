@@ -1,25 +1,39 @@
-import { Eye, EyeOff, Laptop, ShieldAlert, ShieldCheck, Smartphone } from 'lucide-react';
-import { useState } from 'react';
+import { Eye, EyeOff, Laptop, ShieldAlert, ShieldCheck, Smartphone, Tablet } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { verifyNewDevice } from '../lib/deviceAuth';
 
 interface DeviceVerificationGateProps {
   detectedLabel: string;
+  detectedModel?: string;
+  systemSummary?: string;
   reason?: string;
   onVerified: () => void;
 }
 
 export function DeviceVerificationGate({
   detectedLabel,
+  detectedModel,
+  systemSummary,
   reason,
   onVerified,
 }: DeviceVerificationGateProps) {
+  const initialDeviceName = detectedModel || detectedLabel || '';
   const [code, setCode] = useState('');
-  const [deviceLabel, setDeviceLabel] = useState(detectedLabel || '');
+  const [deviceLabel, setDeviceLabel] = useState(initialDeviceName);
   const [showCode, setShowCode] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const isMobileLabel = /iPhone|iPad|Android/i.test(detectedLabel);
+  useEffect(() => {
+    const nextSuggested = detectedModel || detectedLabel || '';
+    if (nextSuggested) {
+      setDeviceLabel((prev) => prev || nextSuggested);
+    }
+  }, [detectedModel, detectedLabel]);
+
+  const combinedText = `${detectedModel || ''} ${systemSummary || ''} ${detectedLabel || ''}`;
+  const isTablet = /iPad/i.test(combinedText);
+  const isPhone = /iPhone|Android/i.test(combinedText) && !isTablet;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,7 +42,10 @@ export function DeviceVerificationGate({
     setIsSubmitting(true);
     setErrorMsg(null);
     try {
-      await verifyNewDevice(code, deviceLabel || detectedLabel);
+      await verifyNewDevice(
+        code,
+        deviceLabel.trim() || detectedModel || detectedLabel
+      );
       onVerified();
     } catch (err) {
       setErrorMsg(
@@ -55,7 +72,7 @@ export function DeviceVerificationGate({
                 : 'Phát hiện thiết bị mới'}
             </h1>
             <p className="mt-1 text-sm leading-relaxed text-zinc-400">
-              Thiết bị này chưa được nhận diện là thiết bị quen thuộc. Nhập mã xác nhận để mở khóa và lưu tin cậy thiết bị.
+              Thiết bị này chưa được nhận diện là thiết bị quen thuộc. Nhập mã xác nhận để mở khóa và lưu tên thiết bị.
             </p>
           </div>
         </div>
@@ -63,7 +80,9 @@ export function DeviceVerificationGate({
         {/* Auto-detected device card */}
         <div className="mb-5 flex items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-950/80 px-3.5 py-2.5">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-zinc-900 text-blue-400">
-            {isMobileLabel ? (
+            {isTablet ? (
+              <Tablet className="h-4 w-4" />
+            ) : isPhone ? (
               <Smartphone className="h-4 w-4" />
             ) : (
               <Laptop className="h-4 w-4" />
@@ -74,8 +93,11 @@ export function DeviceVerificationGate({
               Thiết bị đang truy cập
             </p>
             <p className="truncate text-sm font-semibold text-zinc-100">
-              {detectedLabel || 'Thiết bị chưa xác định'}
+              {detectedModel || detectedLabel || 'Thiết bị chưa xác định'}
             </p>
+            {systemSummary && (
+              <p className="truncate text-xs text-zinc-400">{systemSummary}</p>
+            )}
           </div>
         </div>
 
@@ -118,17 +140,20 @@ export function DeviceVerificationGate({
               htmlFor="device-verify-label"
               className="mb-1.5 block text-xs font-semibold text-zinc-300"
             >
-              Tên gợi nhớ cho thiết bị (tùy chọn)
+              Tên thiết bị (VD: iPad Air 4, iPhone 15...)
             </label>
             <input
               id="device-verify-label"
               type="text"
-              maxLength={60}
+              maxLength={80}
               value={deviceLabel}
               onChange={(e) => setDeviceLabel(e.target.value)}
-              placeholder={detectedLabel || 'Ví dụ: Điện thoại tiệm bánh'}
+              placeholder={detectedModel || 'VD: iPad Air 4, iPhone 15, Máy quầy...'}
               className="h-10 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-blue-500 focus:outline-none"
             />
+            <p className="mt-1 text-[11px] text-zinc-500">
+              Hệ thống tự nhận diện dòng máy nếu trình duyệt hỗ trợ; bạn có thể sửa lại đúng tên máy của mình.
+            </p>
           </div>
 
           {errorMsg && (
