@@ -111,9 +111,36 @@ export function OrdersView({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [togglingReadyId, setTogglingReadyId] = useState<string | null>(null);
   const [markingReceivedId, setMarkingReceivedId] = useState<string | null>(null);
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [detailSampleIndex, setDetailSampleIndex] = useState(0);
+  const [detailConfirmReceive, setDetailConfirmReceive] = useState(false);
+  const [detailConfirmDelete, setDetailConfirmDelete] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<{ url: string; title: string } | null>(null);
   const [graceReadyIds, setGraceReadyIds] = useState<string[]>([]);
   const graceTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  const selectedOrder = useMemo(
+    () => (selectedOrderId ? orders.find((o) => o.id === selectedOrderId) || null : null),
+    [orders, selectedOrderId]
+  );
+
+  useEffect(() => {
+    setDetailSampleIndex(0);
+    setDetailConfirmReceive(false);
+    setDetailConfirmDelete(false);
+  }, [selectedOrderId]);
+
+  useEffect(() => {
+    if (!selectedOrderId && !previewUrl) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (previewUrl) setPreviewUrl(null);
+        else setSelectedOrderId(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedOrderId, previewUrl]);
 
   useEffect(() => {
     if (filterMode !== 'not-ready') {
@@ -177,6 +204,10 @@ export function OrdersView({
       await onDeleteOrder(orderId);
       clearGraceTimer(orderId);
       setConfirmDeleteId(null);
+      setDetailConfirmDelete(false);
+      if (selectedOrderId === orderId) {
+        setSelectedOrderId(null);
+      }
     } finally {
       setDeletingId(null);
     }
@@ -392,7 +423,11 @@ export function OrdersView({
               return (
                 <article
                   key={order.id}
-                  className={`grid grid-cols-[88px_minmax(0,1fr)] gap-x-3 gap-y-2 rounded-xl border p-2.5 transition-colors duration-300 sm:grid-cols-[176px_minmax(0,1fr)] sm:p-3 md:grid-cols-[192px_minmax(0,1fr)] ${
+                  onClick={(e) => {
+                    if ((e.target as HTMLElement).closest('button, a')) return;
+                    setSelectedOrderId(order.id);
+                  }}
+                  className={`grid cursor-pointer grid-cols-[88px_minmax(0,1fr)] gap-x-3 gap-y-2 rounded-xl border p-2.5 transition-colors duration-300 sm:grid-cols-[176px_minmax(0,1fr)] sm:p-3 md:grid-cols-[192px_minmax(0,1fr)] ${
                     isDimmingPendingHide
                       ? 'border-emerald-900/50 bg-zinc-950/85'
                       : isReady && !isReceived
@@ -404,12 +439,13 @@ export function OrdersView({
                   {primarySample ? (
                     <button
                       type="button"
-                      onClick={() =>
+                      onClick={(e) => {
+                        e.stopPropagation();
                         setPreviewUrl({
                           url: primarySample.fullUrl,
                           title: primarySample.title || order.productName,
-                        })
-                      }
+                        });
+                      }}
                       title="Nhấn để phóng to ảnh mẫu"
                       className={`group relative col-start-1 row-start-1 aspect-square w-full self-start overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 sm:row-span-3 sm:self-center ${dimContentClass}`}
                     >
@@ -725,10 +761,391 @@ export function OrdersView({
         )}
       </div>
 
+      {/* Order Detail Modal */}
+      {selectedOrder && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/75 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[calc(0.75rem+var(--app-safe-top))] sm:px-4 sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pt-[calc(1rem+var(--app-safe-top))]"
+          onClick={() => setSelectedOrderId(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="order-detail-title"
+            onClick={(e) => e.stopPropagation()}
+            className="flex max-h-full w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950 shadow-2xl sm:max-h-[min(92vh,calc(100dvh-2rem-var(--app-safe-top)))]"
+          >
+            {/* Header */}
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-zinc-800 px-4 py-3.5 sm:px-6 sm:py-4">
+              <div className="min-w-0 space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="tabular-nums rounded-md border border-zinc-700 bg-zinc-900 px-2 py-0.5 font-mono text-xs font-semibold text-zinc-200">
+                    {selectedOrder.orderCode}
+                  </span>
+                  {selectedOrder.isReceived ? (
+                    <span className="inline-flex items-center gap-1 rounded-md border border-emerald-700/70 bg-emerald-950/50 px-2 py-0.5 text-xs font-semibold text-emerald-300">
+                      <PackageCheck className="h-3.5 w-3.5" />
+                      <span>Đã nhận hàng</span>
+                    </span>
+                  ) : selectedOrder.isReady ? (
+                    <span className="inline-flex items-center gap-1 rounded-md border border-emerald-600/70 bg-emerald-950/60 px-2 py-0.5 text-xs font-semibold text-emerald-300">
+                      <Check className="h-3.5 w-3.5" />
+                      <span>Bánh đã sẵn sàng</span>
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 rounded-md border border-amber-800/70 bg-amber-950/40 px-2 py-0.5 text-xs font-semibold text-amber-300">
+                      <Clock className="h-3.5 w-3.5" />
+                      <span>Chưa sẵn sàng</span>
+                    </span>
+                  )}
+                </div>
+                <h2
+                  id="order-detail-title"
+                  className="font-display text-base font-bold leading-snug text-zinc-50 sm:text-lg"
+                >
+                  {selectedOrder.productName}
+                </h2>
+                <p className="tabular-nums text-xs text-zinc-400">
+                  Tạo lúc: {formatDateTime(selectedOrder.createdAt)}
+                  {selectedOrder.updatedAt > selectedOrder.createdAt + 1000 && (
+                    <>
+                      <span aria-hidden="true"> · </span>
+                      <span>Cập nhật: {formatDateTime(selectedOrder.updatedAt)}</span>
+                    </>
+                  )}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedOrderId(null)}
+                aria-label="Đóng chi tiết đơn hàng"
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Two-Column Body: Left = Sample Images, Right = Order Information */}
+            <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto sm:grid-cols-[minmax(250px,43%)_minmax(0,1fr)] sm:overflow-hidden">
+              {/* Left Side: Sample Image Showcase */}
+              <div className="flex flex-col gap-3 border-b border-zinc-800 bg-zinc-900/35 p-4 sm:min-h-0 sm:overflow-y-auto sm:border-b-0 sm:border-r sm:p-5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-zinc-300">
+                    Ảnh mẫu ({selectedOrder.sampleImages.length})
+                  </span>
+                  {selectedOrder.sampleImages.length > 0 && (
+                    <span className="text-[11px] text-zinc-500">
+                      Chạm ảnh để phóng to
+                    </span>
+                  )}
+                </div>
+
+                {selectedOrder.sampleImages.length > 0 ? (
+                  (() => {
+                    const safeIndex = Math.min(
+                      detailSampleIndex,
+                      selectedOrder.sampleImages.length - 1
+                    );
+                    const activeSample = selectedOrder.sampleImages[safeIndex];
+                    return (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPreviewUrl({
+                              url: activeSample.fullUrl,
+                              title: activeSample.title || selectedOrder.productName,
+                            })
+                          }
+                          title="Nhấn để phóng to ảnh mẫu"
+                          className="group relative aspect-square w-full overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 transition-colors hover:border-zinc-600"
+                        >
+                          <img
+                            src={activeSample.fullUrl || activeSample.thumbnailUrl}
+                            alt={activeSample.title || selectedOrder.productName}
+                            referrerPolicy="no-referrer"
+                            className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
+                          />
+                          {selectedOrder.sampleImages.length > 1 && (
+                            <span className="tabular-nums absolute bottom-2 right-2 rounded-md bg-zinc-950/85 px-2 py-0.5 text-xs font-semibold text-zinc-100">
+                              {safeIndex + 1} / {selectedOrder.sampleImages.length}
+                            </span>
+                          )}
+                        </button>
+
+                        {activeSample.title && (
+                          <p className="truncate text-xs font-medium text-zinc-300">
+                            {activeSample.title}
+                          </p>
+                        )}
+
+                        {selectedOrder.sampleImages.length > 1 && (
+                          <div className="grid grid-cols-4 gap-2">
+                            {selectedOrder.sampleImages.map((img, idx) => (
+                              <button
+                                key={img.id}
+                                type="button"
+                                onClick={() => setDetailSampleIndex(idx)}
+                                className={`aspect-square overflow-hidden rounded-lg border transition-all ${
+                                  idx === safeIndex
+                                    ? 'border-blue-500 ring-2 ring-blue-500/40'
+                                    : 'border-zinc-800 opacity-75 hover:border-zinc-600 hover:opacity-100'
+                                }`}
+                              >
+                                <img
+                                  src={img.thumbnailUrl}
+                                  alt={img.title || `Ảnh mẫu ${idx + 1}`}
+                                  referrerPolicy="no-referrer"
+                                  className="h-full w-full object-cover"
+                                />
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()
+                ) : (
+                  <div className="flex aspect-square w-full flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-800 bg-zinc-900/40 px-4 text-center text-xs text-zinc-500">
+                    <ImageIcon className="h-8 w-8 text-zinc-600" />
+                    <span>Không có ảnh mẫu đính kèm</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Right Side: Customer, Pickup Time, Price & Description */}
+              <div className="space-y-3.5 p-4 sm:min-h-0 sm:overflow-y-auto sm:p-5">
+                {/* Customer & Pickup Time */}
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                  <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3.5">
+                    <span className="block text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+                      Khách hàng
+                    </span>
+                    <div className="mt-1.5 space-y-1">
+                      <p className="flex items-center gap-2 text-sm font-semibold text-zinc-100">
+                        <User className="h-4 w-4 shrink-0 text-zinc-400" />
+                        <span>{selectedOrder.customerName}</span>
+                      </p>
+                      <a
+                        href={`tel:${selectedOrder.customerPhone.replace(/\s+/g, '')}`}
+                        className="tabular-nums inline-flex items-center gap-2 text-sm font-medium text-blue-400 hover:underline"
+                      >
+                        <Phone className="h-4 w-4 shrink-0" />
+                        <span>{selectedOrder.customerPhone}</span>
+                      </a>
+                    </div>
+                  </div>
+
+                  <div
+                    className={`rounded-xl border p-3.5 ${
+                      selectedOrder.isReceived
+                        ? 'border-emerald-800/70 bg-emerald-950/25'
+                        : 'border-blue-900/60 bg-blue-950/20'
+                    }`}
+                  >
+                    <span
+                      className={`flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider ${
+                        selectedOrder.isReceived ? 'text-emerald-300/85' : 'text-blue-300/85'
+                      }`}
+                    >
+                      <CalendarClock className="h-3.5 w-3.5 shrink-0" />
+                      <span>Thời gian lấy</span>
+                    </span>
+                    <p
+                      className={`tabular-nums mt-1.5 text-base font-bold ${
+                        selectedOrder.isReceived ? 'text-emerald-200' : 'text-blue-200'
+                      }`}
+                    >
+                      {formatPickupTime(selectedOrder.pickupTime) || 'Chưa hẹn'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Price & Payment Details */}
+                {(() => {
+                  const deposit = Math.max(0, Number(selectedOrder.depositAmount) || 0);
+                  const remaining = Math.max(0, selectedOrder.price - deposit);
+                  const isPaidInFull =
+                    Boolean(selectedOrder.isReceived) ||
+                    Boolean(selectedOrder.isPaid) ||
+                    (selectedOrder.price > 0 && deposit >= selectedOrder.price);
+
+                  return (
+                    <div className="grid grid-cols-3 gap-2.5 rounded-xl border border-zinc-800 bg-zinc-900/60 p-3.5">
+                      <div>
+                        <span className="block text-[11px] font-medium text-zinc-400">
+                          Giá tiền
+                        </span>
+                        <span className="tabular-nums mt-0.5 block text-sm font-bold text-blue-400 sm:text-base">
+                          {formatPriceVnd(selectedOrder.price)}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="block text-[11px] font-medium text-zinc-400">
+                          Đã cọc
+                        </span>
+                        <span className="tabular-nums mt-0.5 block text-sm font-semibold text-zinc-100 sm:text-base">
+                          {deposit > 0 ? formatPriceVnd(deposit) : '0 đ'}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="block text-[11px] font-medium text-zinc-400">
+                          Thanh toán
+                        </span>
+                        {selectedOrder.price > 0 ? (
+                          isPaidInFull ? (
+                            <span className="mt-0.5 inline-flex items-center gap-1 text-sm font-semibold text-emerald-400 sm:text-base">
+                              <CheckCircle2 className="h-4 w-4 shrink-0" />
+                              <span>Đã trả đủ</span>
+                            </span>
+                          ) : (
+                            <span className="tabular-nums mt-0.5 block text-sm font-bold text-amber-300 sm:text-base">
+                              Thiếu {formatPriceVnd(remaining)}
+                            </span>
+                          )
+                        ) : (
+                          <span className="mt-0.5 block text-sm font-medium text-zinc-400">
+                            Thỏa thuận
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Full Product Description */}
+                <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3.5">
+                  <span className="block text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+                    Mô tả sản phẩm
+                  </span>
+                  <p className="mt-1.5 whitespace-pre-line text-sm leading-relaxed text-zinc-100">
+                    {selectedOrder.productDescription || 'Không có mô tả chi tiết.'}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer Actions */}
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-zinc-800 px-4 py-3 sm:px-6 sm:py-3.5">
+              <div className="flex flex-wrap items-center gap-2">
+                {detailConfirmDelete ? (
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setDetailConfirmDelete(false)}
+                      disabled={deletingId === selectedOrder.id}
+                      className="h-9 rounded-lg border border-zinc-700 px-3 text-xs font-medium text-zinc-300 hover:bg-zinc-900"
+                    >
+                      Hủy
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleConfirmDelete(selectedOrder.id)}
+                      disabled={deletingId === selectedOrder.id}
+                      className="h-9 rounded-lg bg-rose-600 px-3 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-50"
+                    >
+                      {deletingId === selectedOrder.id ? 'Đang xóa...' : 'Xác nhận xóa'}
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDetailConfirmReceive(false);
+                      setDetailConfirmDelete(true);
+                    }}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-zinc-800 px-3 text-xs font-medium text-zinc-400 transition-colors hover:border-rose-900/70 hover:bg-rose-950/60 hover:text-rose-300"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>Xóa</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = selectedOrder;
+                    setSelectedOrderId(null);
+                    onEditOrder(target);
+                  }}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-xs font-semibold text-zinc-200 transition-colors hover:bg-zinc-800"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  <span>Chỉnh sửa</span>
+                </button>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {!selectedOrder.isReceived && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleReady(selectedOrder)}
+                      disabled={togglingReadyId === selectedOrder.id}
+                      className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition-colors disabled:opacity-50 ${
+                        selectedOrder.isReady
+                          ? 'border-emerald-500 bg-emerald-950/80 text-emerald-200 hover:bg-emerald-900/70'
+                          : 'border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800'
+                      }`}
+                    >
+                      <Check className="h-3.5 w-3.5" />
+                      <span>{selectedOrder.isReady ? 'Đã sẵn sàng' : 'Sẵn sàng'}</span>
+                    </button>
+
+                    {detailConfirmReceive ? (
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setDetailConfirmReceive(false)}
+                          disabled={markingReceivedId === selectedOrder.id}
+                          className="h-9 rounded-lg border border-zinc-700 px-2.5 text-xs font-medium text-zinc-300 hover:bg-zinc-900"
+                        >
+                          Hủy
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleMarkReceived(selectedOrder)}
+                          disabled={markingReceivedId === selectedOrder.id}
+                          className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+                        >
+                          <PackageCheck className="h-3.5 w-3.5" />
+                          <span>
+                            {markingReceivedId === selectedOrder.id ? 'Đang lưu...' : 'Xác nhận nhận'}
+                          </span>
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDetailConfirmDelete(false);
+                          setDetailConfirmReceive(true);
+                        }}
+                        className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-700/70 bg-emerald-950/50 px-3 text-xs font-semibold text-emerald-300 transition-colors hover:bg-emerald-900/60"
+                      >
+                        <PackageCheck className="h-3.5 w-3.5" />
+                        <span>Nhận hàng</span>
+                      </button>
+                    )}
+                  </>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedOrderId(null)}
+                  className="h-9 rounded-lg border border-zinc-700 px-3.5 text-xs font-semibold text-zinc-200 hover:bg-zinc-900"
+                >
+                  Đóng
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Simple Sample Image Lightbox */}
       {previewUrl && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/85 p-4 backdrop-blur-sm"
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-950/85 p-4 backdrop-blur-sm"
           onClick={() => setPreviewUrl(null)}
         >
           <div
