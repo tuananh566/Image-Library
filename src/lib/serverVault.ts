@@ -191,6 +191,14 @@ export async function deleteServerCategory(categoryId: string): Promise<void> {
   });
 }
 
+export async function deleteServerCategories(ids: string[]): Promise<void> {
+  await apiFetch('/api/categories/batch-delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+}
+
 export async function uploadServerImage(record: VaultImageRecord): Promise<VaultImageView> {
   const { blob, thumbnailBlob, ...meta } = record;
   const formData = new FormData();

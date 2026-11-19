@@ -2022,6 +2022,39 @@ async function startServer() {
     }
   });
 
+  // Batch delete categories & unassign their images
+  app.post('/api/categories/batch-delete', async (req, res, next) => {
+    try {
+      const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : [];
+      if (ids.length === 0) {
+        res.status(400).json({ error: 'No category IDs provided' });
+        return;
+      }
+      const idSet = new Set(ids);
+
+      await withVaultLock(async (vault) => {
+        const now = Date.now();
+        return {
+          nextVault: {
+            ...vault,
+            categories: vault.categories.filter((c) => !idSet.has(c.id)),
+            images: vault.images.map((img) =>
+              img.categoryId && idSet.has(img.categoryId)
+                ? { ...img, categoryId: null, updatedAt: now }
+                : img
+            ),
+          },
+          result: true,
+        };
+      });
+
+      broadcastVaultUpdated();
+      res.json({ ok: true, count: idSet.size });
+    } catch (err) {
+      next(err);
+    }
+  });
+
   // Update image metadata
   app.patch('/api/images/:id', async (req, res, next) => {
     try {

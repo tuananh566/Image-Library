@@ -54,11 +54,27 @@
 
 @media (display-mode: standalone) {
   :root {
+    --app-safe-top: env(safe-area-inset-top, 0px);
+  }
+
+  html.ios-liquid-glass.device-ipad {
+    --app-safe-top: max(env(safe-area-inset-top, 0px), 3.125rem);
+  }
+
+  html.device-iphone {
     --app-safe-top: max(calc(env(safe-area-inset-top, 0px) + 2.5rem), 4rem);
   }
 }
 
 html.ios-standalone {
+  --app-safe-top: env(safe-area-inset-top, 0px);
+}
+
+html.ios-standalone.ios-liquid-glass.device-ipad {
+  --app-safe-top: max(env(safe-area-inset-top, 0px), 3.125rem);
+}
+
+html.ios-standalone.device-iphone {
   --app-safe-top: max(calc(env(safe-area-inset-top, 0px) + 2.5rem), 4rem);
 }
 

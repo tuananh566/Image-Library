@@ -1,5 +1,5 @@
 import { Check, ImageIcon, Upload } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { formatFileSize } from '../lib/imageProcessor';
 import type { Category, ScoredImage, ViewMode } from '../types/vault';
 
@@ -11,6 +11,7 @@ interface GalleryGridProps {
   isBatchMode: boolean;
   selectedIds: string[];
   onToggleSelect: (id: string) => void;
+  onLongPressSelect?: (id: string) => void;
   onOpenImage: (id: string) => void;
   onOpenUpload: () => void;
   canUpload?: boolean;
@@ -43,6 +44,7 @@ function ResilientThumbnail({
       src={src}
       alt={alt}
       loading="lazy"
+      draggable={false}
       referrerPolicy="no-referrer"
       onError={() => setFailed(true)}
       className={className}
@@ -58,6 +60,7 @@ export function GalleryGrid({
   isBatchMode,
   selectedIds,
   onToggleSelect,
+  onLongPressSelect,
   onOpenImage,
   onOpenUpload,
   canUpload = true,
@@ -65,6 +68,64 @@ export function GalleryGrid({
   onClearFilters,
 }: GalleryGridProps) {
   const categoryMap = new Map(categories.map((c) => [c.id, c.name]));
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pressOriginRef = useRef<{ x: number; y: number; id: string } | null>(null);
+  const suppressNextClickIdRef = useRef<string | null>(null);
+
+  const clearLongPressTimer = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    pressOriginRef.current = null;
+  };
+
+  useEffect(() => {
+    return () => {
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleCardPointerDown = (e: React.PointerEvent, id: string) => {
+    if (!onLongPressSelect) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+
+    clearLongPressTimer();
+    pressOriginRef.current = { x: e.clientX, y: e.clientY, id };
+    longPressTimerRef.current = setTimeout(() => {
+      longPressTimerRef.current = null;
+      pressOriginRef.current = null;
+      suppressNextClickIdRef.current = id;
+      onLongPressSelect(id);
+      try {
+        navigator.vibrate?.(12);
+      } catch {
+        // Ignore unsupported vibration
+      }
+    }, 420);
+  };
+
+  const handleCardPointerMove = (e: React.PointerEvent) => {
+    const origin = pressOriginRef.current;
+    if (!origin || !longPressTimerRef.current) return;
+    if (Math.hypot(e.clientX - origin.x, e.clientY - origin.y) > 10) {
+      clearLongPressTimer();
+    }
+  };
+
+  const handleCardClick = (id: string) => {
+    if (suppressNextClickIdRef.current === id) {
+      suppressNextClickIdRef.current = null;
+      return;
+    }
+    if (isBatchMode) {
+      onToggleSelect(id);
+    } else {
+      onOpenImage(id);
+    }
+  };
 
   if (items.length === 0) {
     return (
@@ -225,7 +286,7 @@ export function GalleryGrid({
               isMasonry ? 'mb-3 break-inside-avoid md:portrait:mb-4 md:landscape:mb-3' : 'flex flex-col'
             } ${
               isSelected
-                ? 'border-blue-600 ring-2 ring-blue-600/20 dark:border-blue-500'
+                ? 'border-blue-600 ring-2 ring-blue-600/35 dark:border-blue-500'
                 : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700'
             }`}
           >
@@ -233,9 +294,15 @@ export function GalleryGrid({
             <div
               role="button"
               tabIndex={0}
-              onClick={() =>
-                isBatchMode ? onToggleSelect(image.id) : onOpenImage(image.id)
-              }
+              onPointerDown={(e) => handleCardPointerDown(e, image.id)}
+              onPointerMove={handleCardPointerMove}
+              onPointerUp={clearLongPressTimer}
+              onPointerCancel={clearLongPressTimer}
+              onPointerLeave={clearLongPressTimer}
+              onContextMenu={(e) => {
+                if (onLongPressSelect) e.preventDefault();
+              }}
+              onClick={() => handleCardClick(image.id)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
@@ -244,6 +311,8 @@ export function GalleryGrid({
                 }
               }}
               className={`relative w-full cursor-pointer overflow-hidden bg-zinc-100 focus-visible:outline-2 focus-visible:outline-blue-600 dark:bg-zinc-900 ${
+                onLongPressSelect ? 'select-none [-webkit-touch-callout:none]' : ''
+              } ${
                 isMasonry ? '' : 'aspect-[4/3]'
               }`}
             >
@@ -259,12 +328,12 @@ export function GalleryGrid({
               <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/20 opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
 
               {isBatchMode && (
-                <div className="absolute left-2.5 top-2.5">
+                <div className="pointer-events-none absolute left-2.5 top-2.5">
                   <span
                     className={`flex h-6 w-6 items-center justify-center rounded-md border transition-colors ${
                       isSelected
-                        ? 'border-blue-600 bg-blue-600 text-white'
-                        : 'border-white/80 bg-black/40 text-transparent'
+                        ? 'border-blue-500 bg-blue-600 text-white shadow'
+                        : 'border-white/80 bg-black/45 text-transparent'
                     }`}
                   >
                     <Check className="h-3.5 w-3.5" />

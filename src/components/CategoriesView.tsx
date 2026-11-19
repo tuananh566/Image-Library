@@ -1,5 +1,5 @@
 import { Check, Pencil, Plus, Trash2, X } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Category, VaultImageView } from '../types/vault';
 import { FloatingOrdersCapsule } from './FloatingOrdersCapsule';
 
@@ -13,6 +13,7 @@ interface CategoriesViewProps {
   }) => Promise<void>;
   onUpdateCategory: (category: Category) => Promise<void>;
   onDeleteCategory: (id: string) => Promise<void>;
+  onDeleteCategories?: (ids: string[]) => Promise<void>;
   onOpenCategoryInLibrary: (categoryId: string, sourceRect?: DOMRect) => void;
   canManage?: boolean;
   showOrdersMobile: boolean;
@@ -44,6 +45,7 @@ export function CategoriesView({
   onCreateCategory,
   onUpdateCategory,
   onDeleteCategory,
+  onDeleteCategories,
   onOpenCategoryInLibrary,
   canManage = true,
   showOrdersMobile,
@@ -63,12 +65,45 @@ export function CategoriesView({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
 
+  const [isBatchMode, setIsBatchMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [confirmBatchDelete, setConfirmBatchDelete] = useState(false);
+  const [isBatchDeleting, setIsBatchDeleting] = useState(false);
+
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pressOriginRef = useRef<{ x: number; y: number; id: string } | null>(null);
+  const suppressNextClickIdRef = useRef<string | null>(null);
+
+  const clearLongPressTimer = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    pressOriginRef.current = null;
+  };
+
+  useEffect(() => {
+    return () => {
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+      }
+    };
+  }, []);
+
   useEffect(() => {
     if (!canManage) {
       setIsCreateOpen(false);
       setEditingCategory(null);
+      setIsBatchMode(false);
+      setSelectedIds([]);
+      setConfirmBatchDelete(false);
     }
   }, [canManage]);
+
+  useEffect(() => {
+    const validIds = new Set(categories.map((c) => c.id));
+    setSelectedIds((prev) => prev.filter((id) => validIds.has(id)));
+  }, [categories]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -163,10 +198,139 @@ export function CategoriesView({
 
   const gridColsClass = 'grid-cols-2 md:portrait:grid-cols-2 md:landscape:grid-cols-3';
 
+  const toggleSelectAlbum = (id: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  const handleAlbumPointerDown = (e: React.PointerEvent, id: string) => {
+    if (!canManage) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+
+    clearLongPressTimer();
+    pressOriginRef.current = { x: e.clientX, y: e.clientY, id };
+    longPressTimerRef.current = setTimeout(() => {
+      longPressTimerRef.current = null;
+      pressOriginRef.current = null;
+      suppressNextClickIdRef.current = id;
+      setIsBatchMode(true);
+      setSelectedIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+      try {
+        navigator.vibrate?.(12);
+      } catch {
+        // Ignore unsupported vibration
+      }
+    }, 420);
+  };
+
+  const handleAlbumPointerMove = (e: React.PointerEvent) => {
+    const origin = pressOriginRef.current;
+    if (!origin || !longPressTimerRef.current) return;
+    if (Math.hypot(e.clientX - origin.x, e.clientY - origin.y) > 10) {
+      clearLongPressTimer();
+    }
+  };
+
+  const handleBatchDeleteAlbums = async () => {
+    if (!canManage || selectedIds.length === 0 || isBatchDeleting) return;
+    setIsBatchDeleting(true);
+    try {
+      if (onDeleteCategories) {
+        await onDeleteCategories(selectedIds);
+      } else {
+        for (const id of selectedIds) {
+          await onDeleteCategory(id);
+        }
+      }
+      setSelectedIds([]);
+      setConfirmBatchDelete(false);
+      setIsBatchMode(false);
+    } finally {
+      setIsBatchDeleting(false);
+    }
+  };
+
   return (
     <div className="relative flex h-full min-h-0 flex-col">
       {/* Scrollable Category Area */}
       <div className="min-h-0 flex-1 overflow-y-auto touch-pan-y p-4 pb-28 sm:p-6 sm:pb-28">
+        {canManage && isBatchMode && (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-900/80 bg-blue-950/40 px-3.5 py-2.5 sm:px-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="tabular-nums text-xs font-semibold text-blue-200">
+                {selectedIds.length > 0
+                  ? `Đã chọn ${selectedIds.length} album`
+                  : 'Chạm vào các album để chọn nhiều'}
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectedIds(orderedCategories.map((c) => c.id))}
+                className="text-xs font-medium text-blue-300 hover:underline"
+              >
+                Chọn tất cả
+              </button>
+              {selectedIds.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedIds([]);
+                    setConfirmBatchDelete(false);
+                  }}
+                  className="text-xs text-zinc-400 hover:text-zinc-200 hover:underline"
+                >
+                  Bỏ chọn
+                </button>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {selectedIds.length > 0 &&
+                (confirmBatchDelete ? (
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setConfirmBatchDelete(false)}
+                      className="inline-flex h-8 items-center rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 text-xs font-medium text-zinc-200 hover:bg-zinc-800"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isBatchDeleting}
+                      onClick={handleBatchDeleteAlbums}
+                      className="h-8 rounded-lg bg-rose-600 px-3 text-xs font-medium text-white hover:bg-rose-700 disabled:opacity-50"
+                    >
+                      {isBatchDeleting ? 'Đang xóa...' : `Xóa ${selectedIds.length} album`}
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmBatchDelete(true)}
+                    className="inline-flex h-8 items-center gap-1 rounded-lg border border-rose-900/70 bg-zinc-900 px-2.5 text-xs font-medium text-rose-300 hover:bg-rose-950/40"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>Xóa</span>
+                  </button>
+                ))}
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsBatchMode(false);
+                  setSelectedIds([]);
+                  setConfirmBatchDelete(false);
+                }}
+                className="inline-flex h-8 items-center gap-1 rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 text-xs font-medium text-zinc-200 hover:bg-zinc-800"
+              >
+                <X className="h-3.5 w-3.5" />
+                <span>Xong</span>
+              </button>
+            </div>
+          </div>
+        )}
+
         {orderedCategories.length === 0 ? (
           <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-6 py-12 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
             {canManage
@@ -179,6 +343,7 @@ export function CategoriesView({
               const catImages = imagesByCategory.get(cat.id) || [];
               const previewImages = catImages.slice(0, 4);
               const remainingCount = Math.max(0, catImages.length - 4);
+              const isSelected = isBatchMode && selectedIds.includes(cat.id);
 
               return (
                 <article
@@ -186,16 +351,42 @@ export function CategoriesView({
                   data-category-card={cat.id}
                   role="button"
                   tabIndex={0}
-                  onClick={(e) =>
-                    onOpenCategoryInLibrary(cat.id, e.currentTarget.getBoundingClientRect())
-                  }
+                  onPointerDown={(e) => handleAlbumPointerDown(e, cat.id)}
+                  onPointerMove={handleAlbumPointerMove}
+                  onPointerUp={clearLongPressTimer}
+                  onPointerCancel={clearLongPressTimer}
+                  onPointerLeave={clearLongPressTimer}
+                  onContextMenu={(e) => {
+                    if (canManage) e.preventDefault();
+                  }}
+                  onClick={(e) => {
+                    if (suppressNextClickIdRef.current === cat.id) {
+                      suppressNextClickIdRef.current = null;
+                      return;
+                    }
+                    if (canManage && isBatchMode) {
+                      toggleSelectAlbum(cat.id);
+                      return;
+                    }
+                    onOpenCategoryInLibrary(cat.id, e.currentTarget.getBoundingClientRect());
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
-                      onOpenCategoryInLibrary(cat.id, e.currentTarget.getBoundingClientRect());
+                      if (canManage && isBatchMode) {
+                        toggleSelectAlbum(cat.id);
+                      } else {
+                        onOpenCategoryInLibrary(cat.id, e.currentTarget.getBoundingClientRect());
+                      }
                     }
                   }}
-                  className="group relative aspect-[4/3] w-full cursor-pointer overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 transition-[transform,border-color,box-shadow] duration-150 hover:-translate-y-0.5 hover:border-zinc-300 hover:shadow-md active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-blue-600 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-700"
+                  className={`group relative aspect-[4/3] w-full cursor-pointer overflow-hidden rounded-xl border bg-zinc-100 transition-[transform,border-color,box-shadow] duration-150 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-blue-600 dark:bg-zinc-900 ${
+                    canManage ? 'select-none [-webkit-touch-callout:none]' : ''
+                  } ${
+                    isSelected
+                      ? 'border-blue-500 ring-2 ring-blue-500/40'
+                      : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700'
+                  }`}
                 >
                   {/* Image / Collage Preview */}
                   {previewImages.length === 0 ? (
@@ -213,6 +404,7 @@ export function CategoriesView({
                       src={previewImages[0].thumbnailUrl}
                       alt={cat.name}
                       loading="lazy"
+                      draggable={false}
                       className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
                     />
                   ) : previewImages.length === 2 ? (
@@ -223,6 +415,7 @@ export function CategoriesView({
                           src={img.thumbnailUrl}
                           alt={img.title}
                           loading="lazy"
+                          draggable={false}
                           className="h-full w-full object-cover"
                         />
                       ))}
@@ -233,18 +426,21 @@ export function CategoriesView({
                         src={previewImages[0].thumbnailUrl}
                         alt={previewImages[0].title}
                         loading="lazy"
+                        draggable={false}
                         className="row-span-2 h-full w-full object-cover"
                       />
                       <img
                         src={previewImages[1].thumbnailUrl}
                         alt={previewImages[1].title}
                         loading="lazy"
+                        draggable={false}
                         className="h-full w-full object-cover"
                       />
                       <img
                         src={previewImages[2].thumbnailUrl}
                         alt={previewImages[2].title}
                         loading="lazy"
+                        draggable={false}
                         className="h-full w-full object-cover"
                       />
                     </div>
@@ -258,6 +454,7 @@ export function CategoriesView({
                               src={img.thumbnailUrl}
                               alt={img.title}
                               loading="lazy"
+                              draggable={false}
                               className="h-full w-full object-cover"
                             />
                             {isLastWithMore && (
@@ -278,10 +475,26 @@ export function CategoriesView({
                     </span>
                   </div>
 
+                  {/* Selection Checkbox Badge in Batch Mode */}
+                  {canManage && isBatchMode && (
+                    <div className="pointer-events-none absolute left-2 top-2 sm:left-2.5 sm:top-2.5">
+                      <span
+                        className={`flex h-6 w-6 items-center justify-center rounded-md border transition-colors ${
+                          isSelected
+                            ? 'border-blue-500 bg-blue-600 text-white shadow'
+                            : 'border-white/80 bg-black/45 text-transparent'
+                        }`}
+                      >
+                        <Check className="h-3.5 w-3.5" />
+                      </span>
+                    </div>
+                  )}
+
                   {/* Frosted Square Edit Button inside image */}
-                  {canManage && (
+                  {canManage && !isBatchMode && (
                     <button
                       type="button"
+                      onPointerDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
                         e.stopPropagation();
                         openEditModal(cat);

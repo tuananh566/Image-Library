@@ -38,6 +38,7 @@ import {
   batchUpdateServerImages,
   clearServerVault,
   createServerOrder,
+  deleteServerCategories,
   deleteServerCategory,
   deleteServerImages,
   deleteServerOrder,
@@ -230,6 +231,10 @@ export default function App() {
   useEffect(() => {
     if (activeTab !== 'orders') {
       setOpenedOrdersFromInside(false);
+    }
+    if (activeTab !== 'library') {
+      setIsBatchMode(false);
+      setSelectedIds([]);
     }
   }, [activeTab]);
 
@@ -926,10 +931,15 @@ export default function App() {
                             setSelectedIds(scoredItems.map((s) => s.image.id))
                           }
                           onClearSelection={() => setSelectedIds([])}
+                          onExitBatchMode={() => {
+                            setIsBatchMode(false);
+                            setSelectedIds([]);
+                          }}
                           onAssignCategory={async (catId) => {
                             if (!isAdmin) return;
                             await batchUpdateServerImages(selectedIds, { categoryId: catId });
                             setSelectedIds([]);
+                            setIsBatchMode(false);
                             await reloadVault();
                           }}
                           onDeleteSelected={async () => {
@@ -971,6 +981,16 @@ export default function App() {
                             setSelectedIds((prev) =>
                               prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
                             )
+                          }
+                          onLongPressSelect={
+                            isAdmin
+                              ? (id) => {
+                                  setIsBatchMode(true);
+                                  setSelectedIds((prev) =>
+                                    prev.includes(id) ? prev : [...prev, id]
+                                  );
+                                }
+                              : undefined
                           }
                           onOpenImage={(id) => setInspectedImageId(id)}
                           onOpenUpload={() => {
@@ -1053,6 +1073,14 @@ export default function App() {
                         if (!isAdmin) return;
                         await deleteServerCategory(id);
                         if (filters.categoryId === id) {
+                          setFilters((prev) => ({ ...prev, categoryId: 'all' }));
+                        }
+                        await reloadVault();
+                      }}
+                      onDeleteCategories={async (ids) => {
+                        if (!isAdmin || ids.length === 0) return;
+                        await deleteServerCategories(ids);
+                        if (ids.includes(filters.categoryId)) {
                           setFilters((prev) => ({ ...prev, categoryId: 'all' }));
                         }
                         await reloadVault();
