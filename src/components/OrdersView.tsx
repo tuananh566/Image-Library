@@ -659,9 +659,9 @@ export function OrdersView({
 
                   {/* Bottom: Order Price & Payment Status (Bottom-Left) + Icon-Only Edit/Delete Actions (Bottom-Right) */}
                   <div
-                    className={`col-span-2 flex flex-wrap items-center justify-between gap-2 border-t border-zinc-800/80 pt-2 sm:col-span-1 sm:col-start-2 sm:row-start-3 ${dimContentClass}`}
+                    className={`col-span-2 flex items-center justify-between gap-2.5 border-t border-zinc-800/80 pt-2 sm:col-span-1 sm:col-start-2 sm:row-start-3 ${dimContentClass}`}
                   >
-                    <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
+                    <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
                       <span className="tabular-nums text-sm font-bold text-blue-400 sm:text-base">
                         {formatPriceVnd(order.price)}
                       </span>
@@ -702,7 +702,7 @@ export function OrdersView({
                       )}
                     </div>
 
-                    <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                    <div className="ml-auto flex shrink-0 items-center justify-end gap-2">
                       {!isConfirmingDelete && (
                         <button
                           type="button"
@@ -713,9 +713,9 @@ export function OrdersView({
                           }}
                           title="Chỉnh sửa đơn hàng"
                           aria-label={`Chỉnh sửa đơn ${order.orderCode}`}
-                          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-700 bg-zinc-900 text-zinc-200 transition-colors hover:bg-zinc-800"
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-zinc-700 bg-zinc-900 text-zinc-200 transition-colors hover:bg-zinc-800 sm:h-11 sm:w-11"
                         >
-                          <Pencil className="h-3.5 w-3.5" />
+                          <Pencil className="h-5 w-5" />
                         </button>
                       )}
 
@@ -725,7 +725,7 @@ export function OrdersView({
                             type="button"
                             onClick={() => setConfirmDeleteId(null)}
                             disabled={deletingId === order.id}
-                            className="h-7 rounded-md border border-zinc-700 px-2 text-xs font-medium text-zinc-300 hover:bg-zinc-800 whitespace-nowrap"
+                            className="h-10 rounded-xl border border-zinc-700 px-3.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800 sm:h-11 sm:text-sm whitespace-nowrap"
                           >
                             Hủy
                           </button>
@@ -733,7 +733,7 @@ export function OrdersView({
                             type="button"
                             onClick={() => handleConfirmDelete(order.id)}
                             disabled={deletingId === order.id}
-                            className="h-7 rounded-md bg-rose-600 px-2.5 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-50 whitespace-nowrap"
+                            className="h-10 rounded-xl bg-rose-600 px-3.5 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-50 sm:h-11 sm:text-sm whitespace-nowrap"
                           >
                             {deletingId === order.id ? 'Đang xóa...' : 'Xóa đơn'}
                           </button>
@@ -747,9 +747,9 @@ export function OrdersView({
                           }}
                           title="Xóa đơn hàng"
                           aria-label={`Xóa đơn ${order.orderCode}`}
-                          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-800 text-zinc-400 transition-colors hover:border-rose-900/70 hover:bg-rose-950/60 hover:text-rose-300"
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-zinc-800 text-zinc-400 transition-colors hover:border-rose-900/70 hover:bg-rose-950/60 hover:text-rose-300 sm:h-11 sm:w-11"
                         >
-                          <Trash2 className="h-3.5 w-3.5" />
+                          <Trash2 className="h-5 w-5" />
                         </button>
                       )}
                     </div>
@@ -1032,12 +1032,12 @@ export function OrdersView({
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-zinc-800 px-4 py-3 sm:px-6 sm:py-3.5">
               <div className="flex flex-wrap items-center gap-2">
                 {detailConfirmDelete ? (
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-2">
                     <button
                       type="button"
                       onClick={() => setDetailConfirmDelete(false)}
                       disabled={deletingId === selectedOrder.id}
-                      className="h-9 rounded-lg border border-zinc-700 px-3 text-xs font-medium text-zinc-300 hover:bg-zinc-900"
+                      className="h-11 rounded-xl border border-zinc-700 px-4 text-sm font-medium text-zinc-300 hover:bg-zinc-900"
                     >
                       Hủy
                     </button>
@@ -1045,7 +1045,7 @@ export function OrdersView({
                       type="button"
                       onClick={() => handleConfirmDelete(selectedOrder.id)}
                       disabled={deletingId === selectedOrder.id}
-                      className="h-9 rounded-lg bg-rose-600 px-3 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-50"
+                      className="h-11 rounded-xl bg-rose-600 px-4 text-sm font-semibold text-white hover:bg-rose-500 disabled:opacity-50"
                     >
                       {deletingId === selectedOrder.id ? 'Đang xóa...' : 'Xác nhận xóa'}
                     </button>
@@ -1057,10 +1057,10 @@ export function OrdersView({
                       setDetailConfirmReceive(false);
                       setDetailConfirmDelete(true);
                     }}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-zinc-800 px-3 text-xs font-medium text-zinc-400 transition-colors hover:border-rose-900/70 hover:bg-rose-950/60 hover:text-rose-300"
+                    className="inline-flex h-11 items-center gap-2 rounded-xl border border-zinc-800 px-4 text-sm font-semibold text-zinc-300 transition-colors hover:border-rose-900/70 hover:bg-rose-950/60 hover:text-rose-300"
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    <span>Xóa</span>
+                    <Trash2 className="h-4 w-4" />
+                    <span>Xóa đơn</span>
                   </button>
                 )}
 
@@ -1071,9 +1071,9 @@ export function OrdersView({
                     setSelectedOrderId(null);
                     onEditOrder(target);
                   }}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-xs font-semibold text-zinc-200 transition-colors hover:bg-zinc-800"
+                  className="inline-flex h-11 items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-900 px-4 text-sm font-semibold text-zinc-100 transition-colors hover:bg-zinc-800"
                 >
-                  <Pencil className="h-3.5 w-3.5" />
+                  <Pencil className="h-4 w-4" />
                   <span>Chỉnh sửa</span>
                 </button>
               </div>
