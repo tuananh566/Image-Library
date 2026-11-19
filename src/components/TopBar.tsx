@@ -115,17 +115,17 @@ export function TopBar({
 
   return (
     <header className="standalone-safe-top sticky top-0 z-30 shrink-0 border-b border-zinc-800 bg-zinc-950/95 backdrop-blur-sm">
-      <div className="relative mx-auto flex h-14 max-w-[1600px] items-center justify-between gap-2 px-3 sm:h-15 sm:gap-2.5 sm:px-6">
+      <div className="relative mx-auto flex h-15 max-w-[1600px] items-center justify-between gap-2 px-3 sm:h-16 sm:gap-2.5 sm:px-6">
         {/* Top-Left Control: Menu (3 lines) on left, Back arrow on right when inside a category or inside-opened orders */}
-        <div className="z-10 inline-flex h-10 shrink-0 items-center rounded-xl border border-zinc-800 bg-zinc-900/80 p-1">
+        <div className="z-10 inline-flex h-11 shrink-0 items-center rounded-xl border border-zinc-800 bg-zinc-900/80 p-1 sm:h-12">
           {onToggleMobileSidebar && (
             <button
               type="button"
               onClick={onToggleMobileSidebar}
               aria-label="Mở thanh danh mục"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 md:hidden"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 md:hidden"
             >
-              <Menu className="h-[18px] w-[18px]" />
+              <Menu className="h-[22px] w-[22px]" />
             </button>
           )}
 
@@ -135,9 +135,9 @@ export function TopBar({
               onClick={onToggleDesktopSidebar}
               title={isDesktopSidebarCollapsed ? 'Mở thanh mục lục' : 'Thu gọn thanh mục lục'}
               aria-label={isDesktopSidebarCollapsed ? 'Mở thanh mục lục' : 'Thu gọn thanh mục lục'}
-              className="hidden h-8 w-8 items-center justify-center rounded-lg text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 md:inline-flex"
+              className="hidden h-9 w-9 items-center justify-center rounded-lg text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 sm:h-10 sm:w-10 md:inline-flex"
             >
-              <Menu className="h-[18px] w-[18px]" />
+              <Menu className="h-[22px] w-[22px]" />
             </button>
           )}
 
@@ -145,16 +145,16 @@ export function TopBar({
             <>
               <span
                 aria-hidden="true"
-                className="mx-1 block h-5 w-px bg-zinc-700"
+                className="mx-1 block h-6 w-px bg-zinc-700"
               />
               <button
                 type="button"
                 onClick={onBack}
                 title="Trở lại"
                 aria-label="Trở lại"
-                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 sm:h-10 sm:w-10"
               >
-                <ArrowLeft className="h-[18px] w-[18px]" />
+                <ArrowLeft className="h-5 w-5 sm:h-[22px] sm:w-[22px]" />
               </button>
             </>
           )}
@@ -172,7 +172,7 @@ export function TopBar({
               aria-expanded={isOrderMenuOpen}
               aria-haspopup="menu"
               title="Chọn bộ lọc hiển thị đơn hàng"
-              className="inline-flex h-10 max-w-full items-center gap-1 rounded-lg px-2 font-display text-sm font-bold tracking-tight text-zinc-50 transition-colors hover:text-blue-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 sm:gap-1.5 sm:px-2.5 sm:text-lg"
+              className="inline-flex h-11 max-w-full items-center gap-1 rounded-lg px-2 font-display text-base font-bold tracking-tight text-zinc-50 transition-colors hover:text-blue-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 sm:gap-1.5 sm:px-2.5 sm:text-lg"
             >
               <span className="truncate">{activeOrderLabel}</span>
               <span className="tabular-nums shrink-0 text-xs font-medium text-zinc-400 sm:text-sm">
@@ -189,7 +189,7 @@ export function TopBar({
               <div
                 role="menu"
                 aria-label="Bộ lọc đơn hàng"
-                className="fixed left-1/2 top-[calc(3.75rem+var(--app-safe-top))] z-50 w-[min(calc(100vw-2rem),20rem)] -translate-x-1/2 rounded-2xl border border-zinc-800 bg-zinc-950/98 p-1.5 shadow-2xl backdrop-blur-md sm:absolute sm:top-full sm:mt-2 sm:w-80"
+                className="fixed left-1/2 top-[calc(4rem+var(--app-safe-top))] z-50 w-[min(calc(100vw-2rem),20rem)] -translate-x-1/2 rounded-2xl border border-zinc-800 bg-zinc-950/98 p-1.5 shadow-2xl backdrop-blur-md sm:absolute sm:top-full sm:mt-2 sm:w-80"
               >
                 <div className="px-2.5 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
                   Hiển thị đơn hàng
@@ -324,14 +324,14 @@ export function TopBar({
           <button
             type="button"
             onClick={onOpenCreateOrder}
-            className="z-10 inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full border border-blue-500/70 bg-zinc-900/50 px-3 text-[13px] font-semibold text-blue-300 backdrop-blur-md transition-colors hover:border-blue-400 hover:bg-blue-500/15 hover:text-blue-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 sm:px-4 sm:text-sm whitespace-nowrap"
+            className="z-10 inline-flex h-11 shrink-0 items-center gap-1.5 rounded-full border border-blue-500/70 bg-zinc-900/50 px-3.5 text-sm font-semibold text-blue-300 backdrop-blur-md transition-colors hover:border-blue-400 hover:bg-blue-500/15 hover:text-blue-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 sm:h-12 sm:px-4 sm:text-[15px] whitespace-nowrap"
           >
-            <ClipboardPlus className="h-[18px] w-[18px] shrink-0" />
+            <ClipboardPlus className="h-5 w-5 shrink-0" />
             <span className="sm:hidden">Tạo đơn</span>
             <span className="hidden sm:inline">Tạo đơn hàng</span>
           </button>
         ) : (
-          <div className="w-10 shrink-0" />
+          <div className="w-11 shrink-0 sm:w-12" />
         )}
       </div>
     </header>

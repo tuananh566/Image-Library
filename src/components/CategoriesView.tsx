@@ -1,7 +1,15 @@
-import { Check, Pencil, Plus, Trash2, X } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Camera, Check, ImageIcon, ImagePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { generateId, isImageFile, stripFileExtension } from '../lib/imageProcessor';
 import type { Category, VaultImageView } from '../types/vault';
 import { FloatingOrdersCapsule } from './FloatingOrdersCapsule';
+
+interface PendingAlbumFile {
+  localId: string;
+  file: File;
+  previewUrl: string;
+  title: string;
+}
 
 interface CategoriesViewProps {
   categories: Category[];
@@ -10,6 +18,8 @@ interface CategoriesViewProps {
     name: string;
     description: string;
     color: string;
+    newFiles?: File[];
+    existingImageIds?: string[];
   }) => Promise<void>;
   onUpdateCategory: (category: Category) => Promise<void>;
   onDeleteCategory: (id: string) => Promise<void>;
@@ -52,11 +62,20 @@ export function CategoriesView({
   showOrdersDesktop,
   onOpenOrders,
 }: CategoriesViewProps) {
+  const createFileInputId = useId();
+  const createCameraInputId = useId();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [color, setColor] = useState(() => getRandomPresetColor());
+  const [pendingFiles, setPendingFiles] = useState<PendingAlbumFile[]>([]);
+  const [selectedLibraryIds, setSelectedLibraryIds] = useState<string[]>([]);
+  const [showLibraryPicker, setShowLibraryPicker] = useState(false);
+  const [libraryQuery, setLibraryQuery] = useState('');
+  const [createError, setCreateError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const pendingFilesRef = useRef<PendingAlbumFile[]>([]);
+  pendingFilesRef.current = pendingFiles;
 
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [editName, setEditName] = useState('');
@@ -87,11 +106,18 @@ export function CategoriesView({
       if (longPressTimerRef.current) {
         clearTimeout(longPressTimerRef.current);
       }
+      pendingFilesRef.current.forEach((pf) => URL.revokeObjectURL(pf.previewUrl));
     };
   }, []);
 
   useEffect(() => {
     if (!canManage) {
+      pendingFilesRef.current.forEach((pf) => URL.revokeObjectURL(pf.previewUrl));
+      setPendingFiles([]);
+      setSelectedLibraryIds([]);
+      setShowLibraryPicker(false);
+      setLibraryQuery('');
+      setCreateError(null);
       setIsCreateOpen(false);
       setEditingCategory(null);
       setIsBatchMode(false);
@@ -109,7 +135,7 @@ export function CategoriesView({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         if (editingCategory) setEditingCategory(null);
-        else if (isCreateOpen) setIsCreateOpen(false);
+        else if (isCreateOpen) closeCreateModal();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -127,33 +153,106 @@ export function CategoriesView({
     return map;
   }, [images]);
 
+  const categoryNameMap = useMemo(
+    () => new Map(categories.map((c) => [c.id, c.name])),
+    [categories]
+  );
+
+  const filteredLibraryImages = useMemo(() => {
+    const q = libraryQuery.trim().toLowerCase();
+    const list = q
+      ? images.filter(
+          (img) =>
+            img.title.toLowerCase().includes(q) ||
+            img.fileName.toLowerCase().includes(q) ||
+            (img.categoryId && (categoryNameMap.get(img.categoryId) || '').toLowerCase().includes(q))
+        )
+      : images;
+    return list.slice(0, 80);
+  }, [images, libraryQuery, categoryNameMap]);
+
+  const selectedLibraryImages = useMemo(() => {
+    const idSet = new Set(selectedLibraryIds);
+    return images.filter((img) => idSet.has(img.id));
+  }, [images, selectedLibraryIds]);
+
   const orderedCategories = useMemo(
     () => [...categories].sort((a, b) => a.order - b.order),
     [categories]
   );
 
-  const openCreateModal = () => {
-    if (!canManage) return;
+  const resetCreateDraft = () => {
+    pendingFilesRef.current.forEach((pf) => URL.revokeObjectURL(pf.previewUrl));
+    setPendingFiles([]);
+    setSelectedLibraryIds([]);
+    setShowLibraryPicker(false);
+    setLibraryQuery('');
+    setCreateError(null);
     setName('');
     setDescription('');
     setColor((prev) => getRandomPresetColor(prev));
+  };
+
+  const openCreateModal = () => {
+    if (!canManage) return;
+    resetCreateDraft();
     setIsCreateOpen(true);
+  };
+
+  const closeCreateModal = () => {
+    if (isSubmitting) return;
+    resetCreateDraft();
+    setIsCreateOpen(false);
+  };
+
+  const handleAddCreateFiles = (files: File[]) => {
+    const valid = files.filter((f) => isImageFile(f));
+    if (valid.length === 0) {
+      setCreateError('Vui lòng chọn tệp hình ảnh hợp lệ (JPG, PNG, WebP, HEIC, SVG, GIF).');
+      return;
+    }
+    setCreateError(null);
+    const mapped: PendingAlbumFile[] = valid.map((file) => ({
+      localId: generateId(),
+      file,
+      previewUrl: URL.createObjectURL(file),
+      title: stripFileExtension(file.name) || 'Ảnh mẫu mới',
+    }));
+    setPendingFiles((prev) => [...prev, ...mapped]);
+  };
+
+  const removePendingFile = (localId: string) => {
+    setPendingFiles((prev) => {
+      const target = prev.find((p) => p.localId === localId);
+      if (target) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((p) => p.localId !== localId);
+    });
+  };
+
+  const toggleLibrarySelection = (id: string) => {
+    setSelectedLibraryIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
   };
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canManage || !name.trim() || isSubmitting) return;
     setIsSubmitting(true);
+    setCreateError(null);
     try {
       await onCreateCategory({
         name: name.trim(),
         description: description.trim(),
         color,
+        newFiles: pendingFiles.map((pf) => pf.file),
+        existingImageIds: selectedLibraryIds,
       });
-      setName('');
-      setDescription('');
-      setColor((prev) => getRandomPresetColor(prev));
+      resetCreateDraft();
       setIsCreateOpen(false);
+    } catch (err) {
+      const detail = err instanceof Error && err.message ? ` (${err.message})` : '';
+      setCreateError(`Không thể tạo album hoặc tải ảnh lên${detail}. Vui lòng thử lại.`);
     } finally {
       setIsSubmitting(false);
     }
@@ -254,7 +353,7 @@ export function CategoriesView({
   return (
     <div className="relative flex h-full min-h-0 flex-col">
       {/* Scrollable Category Area */}
-      <div className="min-h-0 flex-1 overflow-y-auto touch-pan-y p-4 pb-28 sm:p-6 sm:pb-28">
+      <div className="min-h-0 flex-1 overflow-y-auto touch-pan-y p-1.5 pb-28 sm:p-2.5 sm:pb-28">
         {canManage && isBatchMode && (
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-900/80 bg-blue-950/40 px-3.5 py-2.5 sm:px-4">
             <div className="flex flex-wrap items-center gap-3">
@@ -338,7 +437,7 @@ export function CategoriesView({
               : 'Chưa có danh mục nào. Vào Cài đặt để xác thực Admin nếu cần tạo danh mục mới.'}
           </div>
         ) : (
-          <div className={`grid ${gridColsClass} gap-3.5 sm:gap-5`}>
+          <div className={`grid ${gridColsClass} gap-1.5 sm:gap-2.5`}>
             {orderedCategories.map((cat) => {
               const catImages = imagesByCategory.get(cat.id) || [];
               const previewImages = catImages.slice(0, 4);
@@ -380,12 +479,12 @@ export function CategoriesView({
                       }
                     }
                   }}
-                  className={`group relative aspect-[4/3] w-full cursor-pointer overflow-hidden rounded-xl border bg-zinc-100 transition-[transform,border-color,box-shadow] duration-150 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-blue-600 dark:bg-zinc-900 ${
+                  className={`group relative aspect-[4/3] w-full cursor-pointer overflow-hidden rounded-lg border bg-zinc-100 transition-[transform,border-color,box-shadow] duration-150 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-blue-600 dark:bg-zinc-900 ${
                     canManage ? 'select-none [-webkit-touch-callout:none]' : ''
                   } ${
                     isSelected
                       ? 'border-blue-500 ring-2 ring-blue-500/40'
-                      : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700'
+                      : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-800/80 dark:hover:border-zinc-700'
                   }`}
                 >
                   {/* Image / Collage Preview */}
@@ -520,71 +619,74 @@ export function CategoriesView({
         onOpenOrders={onOpenOrders}
         canAdd={canManage}
         onAddClick={openCreateModal}
-        addTitle="Tạo danh mục mới"
-        addAriaLabel="Tạo danh mục mới"
+        addTitle="Tạo album mới"
+        addAriaLabel="Tạo album mới"
       />
 
-      {/* Create Category Modal */}
+      {/* Create Album Modal (with optional image upload & library selection) */}
       {isCreateOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/60 p-4 backdrop-blur-xs"
-          onClick={() => setIsCreateOpen(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/75 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[calc(0.75rem+var(--app-safe-top))] sm:px-4 sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pt-[calc(1rem+var(--app-safe-top))]"
+          onClick={closeCreateModal}
         >
           <div
             role="dialog"
             aria-modal="true"
             aria-labelledby="create-category-title"
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
+            className="flex max-h-full w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950 shadow-2xl sm:max-h-[min(92vh,calc(100dvh-2rem-var(--app-safe-top)))]"
           >
-            <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
+            <div className="flex shrink-0 items-center justify-between border-b border-zinc-800 px-5 py-4">
               <h2
                 id="create-category-title"
-                className="font-display text-base font-bold text-zinc-950 dark:text-zinc-50"
+                className="font-display text-base font-bold text-zinc-50"
               >
-                Tạo danh mục mới
+                Tạo album mới
               </h2>
               <button
                 type="button"
-                onClick={() => setIsCreateOpen(false)}
+                onClick={closeCreateModal}
                 aria-label="Đóng"
-                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
-            <form onSubmit={handleCreate} className="space-y-4 p-5">
+            <form
+              id="create-album-form"
+              onSubmit={handleCreate}
+              className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5"
+            >
               <div>
-                <label className="mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                  Tên danh mục
+                <label className="mb-1.5 block text-xs font-medium text-zinc-400">
+                  Tên album <span className="text-rose-400">*</span>
                 </label>
                 <input
                   type="text"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Ví dụ: Bánh kem, Bánh mì..."
-                  autoFocus
                   required
-                  className="h-10 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-blue-600 focus:outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                  className="h-10 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:border-blue-600 focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                <label className="mb-1.5 block text-xs font-medium text-zinc-400">
                   Mô tả ngắn (tùy chọn)
                 </label>
                 <input
                   type="text"
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Mục đích lưu trữ của danh mục này..."
-                  className="h-10 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus:border-blue-600 focus:outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                  placeholder="Mục đích lưu trữ của album này..."
+                  className="h-10 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:border-blue-600 focus:outline-none"
                 />
               </div>
 
               <div>
-                <span className="mb-2 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                <span className="mb-2 block text-xs font-medium text-zinc-400">
                   Màu biểu tượng
                 </span>
                 <div className="flex items-center gap-2.5">
@@ -595,7 +697,7 @@ export function CategoriesView({
                       onClick={() => setColor(c)}
                       aria-label={`Chọn màu ${c}`}
                       className={`h-7 w-7 rounded-full transition-transform ${
-                        color === c ? 'scale-110 ring-2 ring-blue-600 ring-offset-2' : ''
+                        color === c ? 'scale-110 ring-2 ring-blue-500 ring-offset-2 ring-offset-zinc-950' : ''
                       }`}
                       style={{ backgroundColor: c }}
                     />
@@ -603,24 +705,241 @@ export function CategoriesView({
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsCreateOpen(false)}
-                  className="h-9 rounded-lg border border-zinc-200 px-4 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-900"
-                >
-                  Hủy
-                </button>
-                <button
-                  type="submit"
-                  disabled={!name.trim() || isSubmitting}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-                >
-                  <Plus className="h-4 w-4" />
-                  <span>Tạo danh mục</span>
-                </button>
+              {/* Add Images into New Album */}
+              <div className="space-y-3 border-t border-zinc-800 pt-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="block text-xs font-semibold text-zinc-200">
+                      Thêm ảnh vào album ({pendingFiles.length + selectedLibraryIds.length})
+                    </span>
+                    <span className="text-xs text-zinc-400">
+                      Tải ảnh mới lên hoặc chọn ảnh sẵn có trong kho (tùy chọn).
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowLibraryPicker((v) => !v)}
+                      className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                        showLibraryPicker
+                          ? 'border-blue-500 bg-blue-950/60 text-blue-300'
+                          : 'border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800'
+                      }`}
+                    >
+                      <ImageIcon className="h-3.5 w-3.5" />
+                      <span>{showLibraryPicker ? 'Ẩn thư viện' : 'Chọn từ thư viện'}</span>
+                    </button>
+
+                    <label
+                      htmlFor={createFileInputId}
+                      className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800 whitespace-nowrap shrink-0"
+                    >
+                      <ImagePlus className="h-3.5 w-3.5" />
+                      <span>Tải ảnh lên</span>
+                    </label>
+
+                    <label
+                      htmlFor={createCameraInputId}
+                      className="hidden h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800 whitespace-nowrap shrink-0 [@media(pointer:coarse)]:inline-flex"
+                    >
+                      <Camera className="h-3.5 w-3.5" />
+                      <span>Chụp ảnh</span>
+                    </label>
+
+                    <input
+                      id={createFileInputId}
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="sr-only"
+                      onChange={(e) => {
+                        if (e.target.files?.length) {
+                          handleAddCreateFiles(Array.from(e.target.files));
+                          e.target.value = '';
+                        }
+                      }}
+                    />
+                    <input
+                      id={createCameraInputId}
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      className="sr-only"
+                      onChange={(e) => {
+                        if (e.target.files?.length) {
+                          handleAddCreateFiles(Array.from(e.target.files));
+                          e.target.value = '';
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {/* Drag & drop prompt or preview grid */}
+                {pendingFiles.length + selectedLibraryIds.length === 0 ? (
+                  <label
+                    htmlFor={createFileInputId}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (e.dataTransfer.files?.length) {
+                        handleAddCreateFiles(Array.from(e.dataTransfer.files));
+                      }
+                    }}
+                    className="flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-zinc-700 bg-zinc-900/40 px-4 py-5 text-center transition-colors hover:border-blue-500 hover:bg-blue-950/20"
+                  >
+                    <ImagePlus className="mb-1.5 h-6 w-6 text-blue-400" />
+                    <p className="text-xs font-medium text-zinc-200">
+                      Nhấn để chọn nhiều ảnh từ thiết bị hoặc kéo thả vào đây
+                    </p>
+                  </label>
+                ) : (
+                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                    {selectedLibraryImages.map((img) => (
+                      <div
+                        key={`lib-${img.id}`}
+                        className="group relative overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900"
+                      >
+                        <div className="aspect-square w-full overflow-hidden">
+                          <img
+                            src={img.thumbnailUrl}
+                            alt={img.title}
+                            referrerPolicy="no-referrer"
+                            className="h-full w-full object-cover"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => toggleLibrarySelection(img.id)}
+                          aria-label={`Bỏ ảnh ${img.title}`}
+                          className="absolute right-1 top-1 inline-flex h-6 w-6 items-center justify-center rounded-full bg-zinc-950/80 text-zinc-200 transition-colors hover:bg-rose-600 hover:text-white"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ))}
+
+                    {pendingFiles.map((pf) => (
+                      <div
+                        key={pf.localId}
+                        className="group relative overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900"
+                      >
+                        <div className="aspect-square w-full overflow-hidden">
+                          <img
+                            src={pf.previewUrl}
+                            alt={pf.title}
+                            className="h-full w-full object-cover"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removePendingFile(pf.localId)}
+                          aria-label={`Bỏ ảnh ${pf.title}`}
+                          className="absolute right-1 top-1 inline-flex h-6 w-6 items-center justify-center rounded-full bg-zinc-950/80 text-zinc-200 transition-colors hover:bg-rose-600 hover:text-white"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Library Picker */}
+                {showLibraryPicker && (
+                  <div className="space-y-2.5 rounded-xl border border-zinc-800 bg-zinc-900/70 p-3">
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500" />
+                      <input
+                        type="text"
+                        value={libraryQuery}
+                        onChange={(e) => setLibraryQuery(e.target.value)}
+                        placeholder="Tìm ảnh có sẵn theo tên hoặc album..."
+                        className="h-9 w-full rounded-lg border border-zinc-700 bg-zinc-950 pl-8 pr-3 text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+
+                    {filteredLibraryImages.length === 0 ? (
+                      <p className="py-4 text-center text-xs text-zinc-400">
+                        Không có ảnh nào phù hợp.
+                      </p>
+                    ) : (
+                      <div className="grid max-h-52 grid-cols-4 gap-1.5 overflow-y-auto pr-1 sm:grid-cols-5">
+                        {filteredLibraryImages.map((img) => {
+                          const isChecked = selectedLibraryIds.includes(img.id);
+                          return (
+                            <button
+                              key={img.id}
+                              type="button"
+                              onClick={() => toggleLibrarySelection(img.id)}
+                              title={img.title}
+                              className={`relative aspect-square overflow-hidden rounded-lg border transition-all ${
+                                isChecked
+                                  ? 'border-blue-500 ring-2 ring-blue-500/40'
+                                  : 'border-zinc-800 hover:border-zinc-600'
+                              }`}
+                            >
+                              <img
+                                src={img.thumbnailUrl}
+                                alt={img.title}
+                                loading="lazy"
+                                referrerPolicy="no-referrer"
+                                className="h-full w-full object-cover"
+                              />
+                              <span
+                                className={`absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-md border ${
+                                  isChecked
+                                    ? 'border-blue-500 bg-blue-600 text-white'
+                                    : 'border-white/70 bg-black/45 text-transparent'
+                                }`}
+                              >
+                                <Check className="h-3 w-3" />
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {createError && (
+                  <p className="rounded-lg border border-rose-900 bg-rose-950/50 px-3 py-2 text-xs font-medium text-rose-300">
+                    {createError}
+                  </p>
+                )}
               </div>
             </form>
+
+            <div className="flex shrink-0 items-center justify-end gap-2 border-t border-zinc-800 px-5 py-3.5">
+              <button
+                type="button"
+                onClick={closeCreateModal}
+                disabled={isSubmitting}
+                className="h-10 rounded-lg border border-zinc-800 px-4 text-sm font-medium text-zinc-300 hover:bg-zinc-900 disabled:opacity-50"
+              >
+                Hủy
+              </button>
+              <button
+                type="submit"
+                form="create-album-form"
+                disabled={!name.trim() || isSubmitting}
+                className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                <Plus className="h-4 w-4" />
+                <span>
+                  {isSubmitting
+                    ? 'Đang tạo...'
+                    : pendingFiles.length + selectedLibraryIds.length > 0
+                    ? `Tạo album (${pendingFiles.length + selectedLibraryIds.length} ảnh)`
+                    : 'Tạo album'}
+                </span>
+              </button>
+            </div>
           </div>
         </div>
       )}

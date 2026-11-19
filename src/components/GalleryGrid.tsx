@@ -271,8 +271,8 @@ export function GalleryGrid({
     <div
       className={
         isMasonry
-          ? `${masonryColsClass} gap-3 md:portrait:gap-4 md:landscape:gap-3`
-          : `grid ${gridColsClass} gap-3 md:portrait:gap-4 md:landscape:gap-3`
+          ? `${masonryColsClass} gap-1.5 md:portrait:gap-2 md:landscape:gap-2`
+          : `grid ${gridColsClass} gap-1.5 md:portrait:gap-2 md:landscape:gap-2`
       }
     >
       {items.map(({ image }) => {
@@ -282,12 +282,12 @@ export function GalleryGrid({
           <article
             key={image.id}
             data-image-card={image.id}
-            className={`group relative overflow-hidden rounded-xl border bg-white transition-[transform,border-color,box-shadow] duration-150 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.97] dark:bg-zinc-950 ${
-              isMasonry ? 'mb-3 break-inside-avoid md:portrait:mb-4 md:landscape:mb-3' : 'flex flex-col'
+            className={`group relative overflow-hidden rounded-lg border bg-white transition-[transform,border-color,box-shadow] duration-150 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.97] dark:bg-zinc-950 ${
+              isMasonry ? 'mb-1.5 break-inside-avoid md:portrait:mb-2 md:landscape:mb-2' : 'flex flex-col'
             } ${
               isSelected
                 ? 'border-blue-600 ring-2 ring-blue-600/35 dark:border-blue-500'
-                : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700'
+                : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-800/80 dark:hover:border-zinc-700'
             }`}
           >
             {/* Image Container */}

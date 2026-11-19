@@ -126,35 +126,35 @@ export function Sidebar({
 
   const renderScrollableContent = () => {
     return (
-      <div className="flex min-h-full flex-col justify-between gap-4 px-4 py-4">
+      <div className="flex min-h-full flex-col justify-between gap-4 px-3.5 py-4">
         {/* Navigation & Sub-categories */}
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1.5">
           <button
             type="button"
             onClick={() => {
               onSelectTab('categories');
               onCloseMobile();
             }}
-            className={`flex h-11 items-center justify-between rounded-xl px-3 text-[15px] font-medium transition-colors duration-150 ${
+            className={`flex h-13 items-center justify-between rounded-xl px-3.5 text-base font-semibold transition-colors duration-150 ${
               activeTab === 'categories'
                 ? 'bg-zinc-100 text-zinc-950'
                 : 'text-zinc-300 hover:bg-zinc-900'
             }`}
           >
-            <span className="flex items-center gap-2.5 truncate">
-              <LayoutGrid className="h-[18px] w-[18px] shrink-0" />
+            <span className="flex items-center gap-3 truncate">
+              <LayoutGrid className="h-5 w-5 shrink-0" />
               <span className="truncate">Album</span>
             </span>
-            <span className="tabular-nums text-xs font-semibold opacity-75">
+            <span className="tabular-nums text-sm font-semibold opacity-75">
               {categories.length}
             </span>
           </button>
 
             {/* Compact Album sub-list nested underneath "Album" */}
             <div className="mb-2 ml-3.5 mt-1 border-l border-zinc-800 pl-2.5">
-              <div className="flex flex-col gap-1">
+              <div className="flex flex-col gap-1.5">
                 {categories.length === 0 ? (
-                  <p className="px-2 py-1.5 text-xs text-zinc-500">
+                  <p className="px-2 py-2 text-xs text-zinc-500">
                     Chưa có danh mục nào.
                   </p>
                 ) : (
@@ -170,21 +170,21 @@ export function Sidebar({
                           onSelectCategory(cat.id);
                           onCloseMobile();
                         }}
-                        className={`flex h-9 items-center justify-between rounded-lg px-2.5 text-[13px] transition-colors duration-150 ${
+                        className={`flex h-11 items-center justify-between rounded-xl px-3 text-[15px] transition-colors duration-150 ${
                           isSelected
                             ? 'bg-blue-950/60 font-semibold text-blue-300'
-                            : 'font-medium text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'
+                            : 'font-medium text-zinc-300 hover:bg-zinc-900 hover:text-zinc-100'
                         }`}
                       >
-                        <span className="flex min-w-0 items-center gap-2">
+                        <span className="flex min-w-0 items-center gap-2.5">
                           <span
                             aria-hidden="true"
-                            className="h-2.5 w-2.5 shrink-0 rounded-full"
+                            className="h-3 w-3 shrink-0 rounded-full"
                             style={{ backgroundColor: cat.color || '#2563EB' }}
                           />
                           <span className="truncate">{cat.name}</span>
                         </span>
-                        <span className="tabular-nums text-xs text-zinc-500">
+                        <span className="tabular-nums text-xs font-medium text-zinc-400">
                           {count}
                         </span>
                       </button>
@@ -201,17 +201,17 @@ export function Sidebar({
                 onSelectCategory('all');
                 onCloseMobile();
               }}
-              className={`flex h-11 items-center justify-between rounded-xl px-3 text-[15px] font-medium transition-colors duration-150 ${
+              className={`flex h-13 items-center justify-between rounded-xl px-3.5 text-base font-semibold transition-colors duration-150 ${
                 activeTab === 'library' && selectedCategoryId === 'all'
                   ? 'bg-zinc-100 text-zinc-950'
                   : 'text-zinc-300 hover:bg-zinc-900'
               }`}
             >
-              <span className="flex items-center gap-2.5 truncate">
-                <Images className="h-[18px] w-[18px] shrink-0" />
+              <span className="flex items-center gap-3 truncate">
+                <Images className="h-5 w-5 shrink-0" />
                 <span className="truncate">Tất cả ảnh mẫu</span>
               </span>
-              <span className="tabular-nums text-xs font-semibold opacity-75">{totalCount}</span>
+              <span className="tabular-nums text-sm font-semibold opacity-75">{totalCount}</span>
             </button>
         </div>
 
@@ -222,17 +222,17 @@ export function Sidebar({
             onSelectTab('orders');
             onCloseMobile();
           }}
-          className={`flex h-14 w-full shrink-0 items-center justify-between rounded-xl border border-white/90 px-4 text-base font-semibold transition-colors duration-150 sm:text-[17px] ${
+          className={`flex h-16 w-full shrink-0 items-center justify-between rounded-2xl border border-white/90 px-4 text-[17px] font-semibold transition-colors duration-150 sm:text-lg ${
             activeTab === 'orders'
               ? 'bg-zinc-100 text-zinc-950'
               : 'bg-zinc-900/60 text-zinc-50 hover:bg-zinc-900'
           }`}
         >
-          <span className="flex items-center gap-2.5 truncate">
-            <ShoppingBag className="h-5 w-5 shrink-0" />
+          <span className="flex items-center gap-3 truncate">
+            <ShoppingBag className="h-[22px] w-[22px] shrink-0" />
             <span className="truncate">Đơn hàng</span>
           </span>
-          <span className="tabular-nums text-sm font-bold opacity-85">
+          <span className="tabular-nums text-base font-bold opacity-85">
             {ordersCount}
           </span>
         </button>
@@ -248,9 +248,9 @@ export function Sidebar({
           onOpenSettings();
           onCloseMobile();
         }}
-        className="flex h-11 w-full items-center gap-2.5 rounded-xl px-3 text-[15px] font-medium text-zinc-300 transition-colors hover:bg-zinc-900"
+        className="flex h-13 w-full items-center gap-3 rounded-xl px-3.5 text-base font-semibold text-zinc-300 transition-colors hover:bg-zinc-900"
       >
-        <Settings className="h-[18px] w-[18px] shrink-0" />
+        <Settings className="h-5 w-5 shrink-0" />
         <span>Cài đặt</span>
       </button>
     </div>
@@ -359,15 +359,15 @@ export function Sidebar({
                 className="relative z-10 flex h-full w-72 max-w-[85vw] flex-col border-r border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
               >
                 <div className="standalone-safe-top flex shrink-0 items-center justify-between border-b border-zinc-800 px-4">
-                  <div className="flex h-14 w-full items-center justify-between">
-                    <span className="font-display text-base font-semibold text-zinc-50">
+                  <div className="flex h-15 w-full items-center justify-between">
+                    <span className="font-display text-base font-bold text-zinc-50">
                       Album & Bộ lọc
                     </span>
                     <button
                       type="button"
                       onClick={onCloseMobile}
                       aria-label="Đóng thanh danh mục"
-                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900"
+                      className="inline-flex h-11 w-11 items-center justify-center rounded-xl text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100"
                     >
                       <X className="h-5 w-5" />
                     </button>

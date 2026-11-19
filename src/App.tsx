@@ -33,6 +33,7 @@ import {
   inferImageMimeType,
   isImageFile,
   processImageBlob,
+  stripFileExtension,
 } from './lib/imageProcessor';
 import {
   batchUpdateServerImages,
@@ -569,6 +570,8 @@ export default function App() {
     name: string;
     description: string;
     color: string;
+    newFiles?: File[];
+    existingImageIds?: string[];
   }) => {
     if (!isAdmin) return;
     const newCat: Category = {
@@ -580,7 +583,43 @@ export default function App() {
       createdAt: Date.now(),
     };
     await saveServerCategory(newCat);
-    await reloadVault();
+
+    try {
+      if (data.existingImageIds && data.existingImageIds.length > 0) {
+        await batchUpdateServerImages(data.existingImageIds, { categoryId: newCat.id });
+      }
+
+      if (data.newFiles && data.newFiles.length > 0) {
+        const now = Date.now();
+        for (let i = 0; i < data.newFiles.length; i++) {
+          const file = data.newFiles[i];
+          const processed = await processImageBlob(file);
+          const record: VaultImageRecord = {
+            id: generateId(),
+            title: stripFileExtension(file.name) || `Ảnh mẫu ${i + 1}`,
+            fileName: file.name || `anh-mau-${now + i}.jpg`,
+            notes: '',
+            categoryId: newCat.id,
+            tags: [],
+            width: processed.width,
+            height: processed.height,
+            size: file.size,
+            mimeType: inferImageMimeType(file),
+            aspectRatioType: processed.aspectRatioType,
+            dominantColors: processed.dominantColors,
+            colorFamilies: processed.colorFamilies,
+            isFavorite: false,
+            createdAt: now + i,
+            updatedAt: now + i,
+            blob: file,
+            thumbnailBlob: processed.thumbnailBlob,
+          };
+          await uploadServerImage(record);
+        }
+      }
+    } finally {
+      await reloadVault();
+    }
   };
 
   const handleConfirmUpload = async (
@@ -922,7 +961,7 @@ export default function App() {
                 >
                 {activeTab === 'library' ? (
                   <>
-                    <div className="min-h-0 flex-1 overflow-y-auto touch-pan-y p-4 pb-28 sm:p-6 sm:pb-28">
+                    <div className="min-h-0 flex-1 overflow-y-auto touch-pan-y p-1.5 pb-28 sm:p-2.5 sm:pb-28">
                       {isAdmin && isBatchMode && (
                         <BatchActionBar
                           selectedCount={selectedIds.length}
@@ -954,7 +993,7 @@ export default function App() {
 
                       {isLoading ? (
                         <div
-                          className={`grid gap-3 md:portrait:gap-4 md:landscape:gap-3 ${
+                          className={`grid gap-1.5 md:portrait:gap-2 md:landscape:gap-2 ${
                             isDesktopSidebarCollapsed
                               ? 'grid-cols-2 md:portrait:grid-cols-4 md:landscape:grid-cols-6'
                               : 'grid-cols-2 md:portrait:grid-cols-3 md:landscape:grid-cols-5'

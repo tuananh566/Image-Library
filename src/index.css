@@ -60,10 +60,6 @@
   html.ios-liquid-glass.device-ipad {
     --app-safe-top: max(env(safe-area-inset-top, 0px), 3.125rem);
   }
-
-  html.device-iphone {
-    --app-safe-top: max(calc(env(safe-area-inset-top, 0px) + 0.75rem), 3rem);
-  }
 }
 
 html.ios-standalone {
@@ -72,10 +68,6 @@ html.ios-standalone {
 
 html.ios-standalone.ios-liquid-glass.device-ipad {
   --app-safe-top: max(env(safe-area-inset-top, 0px), 3.125rem);
-}
-
-html.ios-standalone.device-iphone {
-  --app-safe-top: max(calc(env(safe-area-inset-top, 0px) + 0.75rem), 3rem);
 }
 
 .standalone-safe-top {
