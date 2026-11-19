@@ -372,12 +372,7 @@ function toPublicDevice(rec: TrustedDeviceRecord, currentDeviceId?: string) {
   };
 }
 
-const MAX_VERIFY_ATTEMPTS = 5;
-const VERIFY_LOCKOUT_MS = 5 * 60 * 1000;
-const verifyFailuresByIp = new Map<
-  string,
-  { count: number; resetAt: number; lockedUntil: number }
->();
+const verifyFailuresByIp = new Map<string, { count: number; resetAt: number }>();
 
 function toClientImage(rec: ServerImageRecord) {
   const { storedFile: _sf, storedThumbFile: _stf, ...rest } = rec;
@@ -526,10 +521,9 @@ async function startServer() {
       const ip = getClientIp(req) || 'unknown';
       const now = Date.now();
       const failureState = verifyFailuresByIp.get(ip);
-      if (failureState && failureState.lockedUntil > now) {
-        const minsLeft = Math.max(1, Math.ceil((failureState.lockedUntil - now) / 60_000));
+      if (failureState && failureState.resetAt > now && failureState.count >= 10) {
         res.status(429).json({
-          error: `Tạm khóa do nhập sai ${MAX_VERIFY_ATTEMPTS} lần liên tiếp. Vui lòng thử lại sau ${minsLeft} phút.`,
+          error: 'Bạn đã nhập sai mã quá nhiều lần. Vui lòng thử lại sau ít phút.',
         });
         return;
       }
@@ -544,26 +538,16 @@ async function startServer() {
       if (!verifyCodeMatch(code)) {
         const nextCount =
           failureState && failureState.resetAt > now ? failureState.count + 1 : 1;
-        const isLockedNow = nextCount >= MAX_VERIFY_ATTEMPTS;
-        const lockedUntil = isLockedNow ? now + VERIFY_LOCKOUT_MS : 0;
         verifyFailuresByIp.set(ip, {
           count: nextCount,
           resetAt:
             failureState && failureState.resetAt > now
               ? failureState.resetAt
-              : now + VERIFY_LOCKOUT_MS,
-          lockedUntil,
+              : now + 5 * 60 * 1000,
         });
-
-        if (isLockedNow) {
-          res.status(429).json({
-            error: `Bạn đã nhập sai ${MAX_VERIFY_ATTEMPTS} lần liên tiếp. Tạm khóa trong 5 phút.`,
-          });
-        } else {
-          res.status(401).json({
-            error: `Mã xác nhận không đúng. Còn ${MAX_VERIFY_ATTEMPTS - nextCount} lần thử.`,
-          });
-        }
+        res.status(401).json({
+          error: 'Mã xác nhận không đúng. Vui lòng kiểm tra lại.',
+        });
         return;
       }
 
