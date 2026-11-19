@@ -9,9 +9,11 @@ import multer from 'multer';
 import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
+import zlib from 'zlib';
 import { createServer as createViteServer } from 'vite';
 
 const execFileAsync = promisify(execFile);
+const gzipAsync = promisify(zlib.gzip);
 
 interface CategoryRecord {
   id: string;
@@ -1460,8 +1462,8 @@ async function startServer() {
     });
   });
 
-  // Read full vault metadata
-  app.get('/api/vault', async (_req, res, next) => {
+  // Read full vault metadata (gzip-compressed when client supports it)
+  app.get('/api/vault', async (req, res, next) => {
     try {
       const vault = await readVaultFile();
       const categories = [...vault.categories].sort(
@@ -1489,12 +1491,25 @@ async function startServer() {
         })
         .map(toClientOrder);
 
-      res.json({
+      const json = JSON.stringify({
         categories,
         images,
         orders,
         seeded: vault.seeded,
       });
+
+      const acceptEncoding = String(req.headers['accept-encoding'] || '');
+      if (json.length > 1024 && acceptEncoding.includes('gzip')) {
+        const compressed = await gzipAsync(Buffer.from(json, 'utf8'), { level: 4 });
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Content-Encoding', 'gzip');
+        res.setHeader('Vary', 'Accept-Encoding');
+        res.send(compressed);
+        return;
+      }
+
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.send(json);
     } catch (err) {
       next(err);
     }
@@ -1513,7 +1528,7 @@ async function startServer() {
     }
   });
 
-  // Serve image or thumbnail binaries
+  // Serve image or thumbnail binaries with immutable browser caching
   app.get('/api/files/image/:id', async (req, res, next) => {
     try {
       const img = await getCachedImageById(req.params.id);
@@ -1522,13 +1537,23 @@ async function startServer() {
         return;
       }
       const filePath = resolveSafeChild(UPLOADS_DIR, img.storedFile);
-      if (!filePath || !fs.existsSync(filePath)) {
+      if (!filePath) {
         res.status(404).json({ error: 'File missing on disk' });
         return;
       }
       res.setHeader('Content-Type', img.mimeType || 'image/jpeg');
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-      res.sendFile(filePath);
+      res.sendFile(
+        filePath,
+        { cacheControl: false, dotfiles: 'deny' },
+        (err) => {
+          if (err && !res.headersSent) {
+            res.removeHeader('Cache-Control');
+            const status = (err as NodeJS.ErrnoException).code === 'ENOENT' ? 404 : 500;
+            res.status(status).json({ error: status === 404 ? 'File missing on disk' : 'File read error' });
+          }
+        }
+      );
     } catch (err) {
       next(err);
     }
@@ -1542,20 +1567,52 @@ async function startServer() {
         return;
       }
       const thumbPath = resolveSafeChild(THUMBS_DIR, img.storedThumbFile);
-      if (thumbPath && fs.existsSync(thumbPath)) {
+      const origPath = resolveSafeChild(UPLOADS_DIR, img.storedFile);
+
+      const sendOrigFallback = () => {
+        if (!origPath) {
+          if (!res.headersSent) {
+            res.removeHeader('Cache-Control');
+            res.status(404).json({ error: 'File missing on disk' });
+          }
+          return;
+        }
+        res.setHeader('Content-Type', img.mimeType || 'image/jpeg');
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        res.sendFile(
+          origPath,
+          { cacheControl: false, dotfiles: 'deny' },
+          (err) => {
+            if (err && !res.headersSent) {
+              res.removeHeader('Cache-Control');
+              const status = (err as NodeJS.ErrnoException).code === 'ENOENT' ? 404 : 500;
+              res.status(status).json({ error: status === 404 ? 'File missing on disk' : 'File read error' });
+            }
+          }
+        );
+      };
+
+      if (thumbPath) {
         res.setHeader('Content-Type', img.thumbMimeType || 'image/jpeg');
         res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-        res.sendFile(thumbPath);
+        res.sendFile(
+          thumbPath,
+          { cacheControl: false, dotfiles: 'deny' },
+          (err) => {
+            if (err && !res.headersSent) {
+              if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+                sendOrigFallback();
+              } else {
+                res.removeHeader('Cache-Control');
+                res.status(500).json({ error: 'File read error' });
+              }
+            }
+          }
+        );
         return;
       }
-      const origPath = resolveSafeChild(UPLOADS_DIR, img.storedFile);
-      if (!origPath || !fs.existsSync(origPath)) {
-        res.status(404).json({ error: 'File missing on disk' });
-        return;
-      }
-      res.setHeader('Content-Type', img.mimeType || 'image/jpeg');
-      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-      res.sendFile(origPath);
+
+      sendOrigFallback();
     } catch (err) {
       next(err);
     }
@@ -1564,12 +1621,22 @@ async function startServer() {
   app.get('/api/files/order-image/:fileName', async (req, res, next) => {
     try {
       const filePath = resolveSafeChild(ORDER_IMAGES_DIR, req.params.fileName);
-      if (!filePath || !fs.existsSync(filePath)) {
+      if (!filePath) {
         res.status(404).json({ error: 'Order image not found' });
         return;
       }
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-      res.sendFile(filePath);
+      res.sendFile(
+        filePath,
+        { cacheControl: false, dotfiles: 'deny' },
+        (err) => {
+          if (err && !res.headersSent) {
+            res.removeHeader('Cache-Control');
+            const status = (err as NodeJS.ErrnoException).code === 'ENOENT' ? 404 : 500;
+            res.status(status).json({ error: status === 404 ? 'Order image not found' : 'File read error' });
+          }
+        }
+      );
     } catch (err) {
       next(err);
     }
@@ -1607,8 +1674,10 @@ async function startServer() {
           return;
         }
 
-        await fsp.writeFile(origPath, mainFile.buffer);
-        await fsp.writeFile(thumbPath, thumbFile ? thumbFile.buffer : mainFile.buffer);
+        await Promise.all([
+          fsp.writeFile(origPath, mainFile.buffer),
+          fsp.writeFile(thumbPath, thumbFile ? thumbFile.buffer : mainFile.buffer),
+        ]);
 
         const now = Date.now();
         const record: ServerImageRecord = {
@@ -1656,6 +1725,116 @@ async function startServer() {
 
         broadcastVaultUpdated();
         res.status(201).json(toClientImage(record));
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // Batch upload multiple images + thumbnails in one vault write & SSE broadcast
+  app.post(
+    '/api/images/batch',
+    upload.any(),
+    async (req, res, next) => {
+      try {
+        const uploadedList = Array.isArray(req.files)
+          ? (req.files as Express.Multer.File[])
+          : [];
+        const fileByField = new Map<string, Express.Multer.File>();
+        for (const f of uploadedList) {
+          fileByField.set(f.fieldname, f);
+        }
+
+        const rawMetaList =
+          typeof req.body?.metadata === 'string'
+            ? (JSON.parse(req.body.metadata) as Array<Record<string, unknown>>)
+            : [];
+
+        if (!Array.isArray(rawMetaList) || rawMetaList.length === 0) {
+          res.status(400).json({ error: 'Missing batch metadata' });
+          return;
+        }
+
+        const writeTasks: Array<Promise<void>> = [];
+        const records: ServerImageRecord[] = [];
+        const now = Date.now();
+
+        for (let idx = 0; idx < rawMetaList.length; idx++) {
+          const rawMeta = rawMetaList[idx] || {};
+          const mainFile = fileByField.get(`file_${idx}`);
+          if (!mainFile) continue;
+
+          const thumbFile = fileByField.get(`thumb_${idx}`);
+          const safeId = sanitizeId(String(rawMeta.id || '')) || crypto.randomUUID();
+          const mimeType = String(rawMeta.mimeType || mainFile.mimetype || 'image/jpeg');
+          const fileName = String(rawMeta.fileName || mainFile.originalname || `${safeId}.jpg`);
+          const ext = getFileExt(mimeType, fileName);
+          const storedFile = `${safeId}${ext}`;
+          const thumbMimeType = thumbFile?.mimetype || mimeType;
+          const thumbExt = getFileExt(thumbMimeType, thumbFile?.originalname);
+          const storedThumbFile = `${safeId}${thumbExt}`;
+
+          const origPath = resolveSafeChild(UPLOADS_DIR, storedFile);
+          const thumbPath = resolveSafeChild(THUMBS_DIR, storedThumbFile);
+          if (!origPath || !thumbPath) continue;
+
+          writeTasks.push(fsp.writeFile(origPath, mainFile.buffer));
+          writeTasks.push(fsp.writeFile(thumbPath, thumbFile ? thumbFile.buffer : mainFile.buffer));
+
+          records.push({
+            id: safeId,
+            title: String(rawMeta.title || 'Ảnh mẫu'),
+            fileName,
+            notes: String(rawMeta.notes || ''),
+            categoryId: rawMeta.categoryId ? String(rawMeta.categoryId) : null,
+            tags: Array.isArray(rawMeta.tags) ? rawMeta.tags.map(String) : [],
+            width: Number(rawMeta.width) || 800,
+            height: Number(rawMeta.height) || 600,
+            size: Number(rawMeta.size) || mainFile.size,
+            mimeType,
+            aspectRatioType:
+              rawMeta.aspectRatioType === 'landscape' ||
+              rawMeta.aspectRatioType === 'portrait' ||
+              rawMeta.aspectRatioType === 'square'
+                ? rawMeta.aspectRatioType
+                : 'square',
+            dominantColors: Array.isArray(rawMeta.dominantColors)
+              ? rawMeta.dominantColors.map(String)
+              : [],
+            colorFamilies: Array.isArray(rawMeta.colorFamilies)
+              ? rawMeta.colorFamilies.map(String)
+              : [],
+            isFavorite: Boolean(rawMeta.isFavorite),
+            createdAt: Number(rawMeta.createdAt) || now + idx,
+            updatedAt: Number(rawMeta.updatedAt) || now + idx,
+            storedFile,
+            storedThumbFile,
+            thumbMimeType,
+          });
+        }
+
+        if (records.length === 0) {
+          res.status(400).json({ error: 'No valid image files in batch' });
+          return;
+        }
+
+        await Promise.all(writeTasks);
+
+        const insertedIds = new Set(records.map((r) => r.id));
+        await withVaultLock(async (vault) => {
+          const filtered = vault.images.filter((i) => !insertedIds.has(i.id));
+          return {
+            nextVault: {
+              ...vault,
+              seeded: true,
+              images: [...records.slice().reverse(), ...filtered],
+            },
+            result: records.length,
+          };
+        });
+
+        broadcastVaultUpdated();
+        res.status(201).json({ images: records.map(toClientImage) });
       } catch (err) {
         next(err);
       }
@@ -2009,18 +2188,25 @@ async function startServer() {
         return;
       }
 
-      const category: CategoryRecord = {
-        id: String(body.id),
-        name: String(body.name).trim(),
-        description: String(body.description || ''),
-        color: String(body.color || '#2563EB'),
-        order: Number.isFinite(body.order) ? Number(body.order) : 0,
-        createdAt: Number(body.createdAt) || Date.now(),
-      };
-
-      await withVaultLock(async (vault) => {
-        const exists = vault.categories.some((c) => c.id === category.id);
-        const categories = exists
+      const savedCategory = await withVaultLock(async (vault) => {
+        const existing = vault.categories.find((c) => c.id === String(body.id));
+        const resolvedOrder = Number.isFinite(body.order)
+          ? Number(body.order)
+          : existing
+            ? existing.order
+            : vault.categories.reduce(
+                (max, c) => Math.max(max, Number.isFinite(c.order) ? c.order : -1),
+                -1
+              ) + 1;
+        const category: CategoryRecord = {
+          id: String(body.id),
+          name: String(body.name).trim(),
+          description: String(body.description || ''),
+          color: String(body.color || '#2563EB'),
+          order: resolvedOrder,
+          createdAt: Number(body.createdAt) || existing?.createdAt || Date.now(),
+        };
+        const categories = existing
           ? vault.categories.map((c) => (c.id === category.id ? category : c))
           : [...vault.categories, category];
         return {
@@ -2030,7 +2216,7 @@ async function startServer() {
       });
 
       broadcastVaultUpdated();
-      res.json(category);
+      res.json(savedCategory);
     } catch (err) {
       next(err);
     }
@@ -2473,8 +2659,20 @@ async function startServer() {
 
   if (process.env.NODE_ENV === 'production') {
     const distDir = path.resolve(process.cwd(), 'dist');
-    app.use(express.static(distDir));
+    app.use(
+      express.static(distDir, {
+        maxAge: '30d',
+        setHeaders: (res, filePath) => {
+          if (filePath.endsWith('.html')) {
+            res.setHeader('Cache-Control', 'no-cache');
+          } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          }
+        },
+      })
+    );
     app.get('*', (_req, res) => {
+      res.setHeader('Cache-Control', 'no-cache');
       res.sendFile(path.join(distDir, 'index.html'));
     });
   } else {

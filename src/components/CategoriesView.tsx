@@ -34,6 +34,7 @@ interface CategoriesViewProps {
     color: string;
     newFiles?: File[];
     existingImageIds?: string[];
+    onProgress?: (done: number, total: number) => void;
   }) => Promise<void>;
   onUpdateCategory: (category: Category) => Promise<void>;
   onDeleteCategory: (id: string) => Promise<void>;
@@ -90,6 +91,7 @@ export function CategoriesView({
   const [libraryQuery, setLibraryQuery] = useState('');
   const [createError, setCreateError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [createUploadProgress, setCreateUploadProgress] = useState<{ done: number; total: number } | null>(null);
   const pendingFilesRef = useRef<PendingAlbumFile[]>([]);
   pendingFilesRef.current = pendingFiles;
 
@@ -279,6 +281,9 @@ export function CategoriesView({
     e.preventDefault();
     if (!canManage || !name.trim() || isSubmitting) return;
     setIsSubmitting(true);
+    setCreateUploadProgress(
+      pendingFiles.length > 0 ? { done: 0, total: pendingFiles.length } : null
+    );
     setCreateError(null);
     try {
       await onCreateCategory({
@@ -287,6 +292,7 @@ export function CategoriesView({
         color,
         newFiles: pendingFiles.map((pf) => pf.file),
         existingImageIds: selectedLibraryIds,
+        onProgress: (done, total) => setCreateUploadProgress({ done, total }),
       });
       resetCreateDraft();
       setIsCreateOpen(false);
@@ -295,6 +301,7 @@ export function CategoriesView({
       setCreateError(`Không thể tạo album hoặc tải ảnh lên${detail}. Vui lòng thử lại.`);
     } finally {
       setIsSubmitting(false);
+      setCreateUploadProgress(null);
     }
   };
 
@@ -482,42 +489,24 @@ export function CategoriesView({
     <div className="relative flex h-full min-h-0 flex-col">
       {/* Scrollable Category Area */}
       <div className="min-h-0 flex-1 overflow-y-auto touch-pan-y p-1.5 pb-28 sm:p-2.5 sm:pb-28">
-        {canManage && onReorderCategories && orderedCategories.length > 1 && !isBatchMode && (
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            {isReorderMode ? (
-              <div className="flex w-full flex-wrap items-center justify-between gap-2 rounded-xl border border-blue-900/80 bg-blue-950/40 px-3 py-2 sm:px-3.5">
-                <div className="flex min-w-0 items-center gap-2 text-xs font-medium text-blue-200">
-                  <ArrowUpDown className="h-4 w-4 shrink-0 text-blue-400" />
-                  <span className="truncate">
-                    Kéo nút giữ hoặc bấm ◀ ▶ để đổi vị trí album
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsReorderMode(false)}
-                  className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white transition-colors hover:bg-blue-500"
-                >
-                  <Check className="h-3.5 w-3.5" />
-                  <span>Xong</span>
-                </button>
-              </div>
-            ) : (
-              <div className="flex w-full items-center justify-end">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsBatchMode(false);
-                    setSelectedIds([]);
-                    setConfirmBatchDelete(false);
-                    setIsReorderMode(true);
-                  }}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-900/90 px-3 text-xs font-semibold text-zinc-200 transition-colors hover:border-zinc-700 hover:bg-zinc-800"
-                >
-                  <ArrowUpDown className="h-3.5 w-3.5 text-zinc-400" />
-                  <span>Sắp xếp album</span>
-                </button>
-              </div>
-            )}
+        {canManage && onReorderCategories && orderedCategories.length > 1 && isReorderMode && (
+          <div className="mb-3 flex w-full flex-wrap items-center justify-between gap-2 rounded-xl border border-blue-900/80 bg-blue-950/40 px-3 py-2 sm:px-3.5">
+            <div className="flex min-w-0 items-center gap-2 text-xs font-medium text-blue-200">
+              <ArrowUpDown className="h-4 w-4 shrink-0 text-blue-400" />
+              <span className="truncate">
+                {isReordering
+                  ? 'Đang lưu thứ tự album lên server...'
+                  : 'Kéo nút giữ hoặc bấm ◀ ▶ để đổi vị trí (tự động lưu lên server)'}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsReorderMode(false)}
+              className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white transition-colors hover:bg-blue-500"
+            >
+              <Check className="h-3.5 w-3.5" />
+              <span>Xong</span>
+            </button>
           </div>
         )}
 
@@ -551,6 +540,22 @@ export function CategoriesView({
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              {onReorderCategories && orderedCategories.length > 1 && !confirmBatchDelete && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsBatchMode(false);
+                    setSelectedIds([]);
+                    setConfirmBatchDelete(false);
+                    setIsReorderMode(true);
+                  }}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-blue-700/80 bg-blue-950/60 px-2.5 text-xs font-semibold text-blue-200 transition-colors hover:bg-blue-900/70"
+                >
+                  <ArrowUpDown className="h-3.5 w-3.5" />
+                  <span>Sắp xếp album</span>
+                </button>
+              )}
+
               {selectedIds.length > 0 &&
                 (confirmBatchDelete ? (
                   <div className="flex items-center gap-1.5">
@@ -680,7 +685,8 @@ export function CategoriesView({
                     <img
                       src={previewImages[0].thumbnailUrl}
                       alt={cat.name}
-                      loading="lazy"
+                      loading={idx < 8 ? 'eager' : 'lazy'}
+                      fetchPriority={idx < 4 ? 'high' : undefined}
                       decoding="async"
                       draggable={false}
                       className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
@@ -692,7 +698,8 @@ export function CategoriesView({
                           key={img.id}
                           src={img.thumbnailUrl}
                           alt={img.title}
-                          loading="lazy"
+                          loading={idx < 8 ? 'eager' : 'lazy'}
+                          fetchPriority={idx < 4 ? 'high' : undefined}
                           decoding="async"
                           draggable={false}
                           className="h-full w-full object-cover"
@@ -704,7 +711,8 @@ export function CategoriesView({
                       <img
                         src={previewImages[0].thumbnailUrl}
                         alt={previewImages[0].title}
-                        loading="lazy"
+                        loading={idx < 8 ? 'eager' : 'lazy'}
+                        fetchPriority={idx < 4 ? 'high' : undefined}
                         decoding="async"
                         draggable={false}
                         className="row-span-2 h-full w-full object-cover"
@@ -712,7 +720,7 @@ export function CategoriesView({
                       <img
                         src={previewImages[1].thumbnailUrl}
                         alt={previewImages[1].title}
-                        loading="lazy"
+                        loading={idx < 8 ? 'eager' : 'lazy'}
                         decoding="async"
                         draggable={false}
                         className="h-full w-full object-cover"
@@ -720,7 +728,7 @@ export function CategoriesView({
                       <img
                         src={previewImages[2].thumbnailUrl}
                         alt={previewImages[2].title}
-                        loading="lazy"
+                        loading={idx < 8 ? 'eager' : 'lazy'}
                         decoding="async"
                         draggable={false}
                         className="h-full w-full object-cover"
@@ -728,14 +736,15 @@ export function CategoriesView({
                     </div>
                   ) : (
                     <div className="grid h-full w-full grid-cols-2 grid-rows-2 gap-0.5">
-                      {previewImages.map((img, idx) => {
-                        const isLastWithMore = idx === 3 && remainingCount > 0;
+                      {previewImages.map((img, thumbIdx) => {
+                        const isLastWithMore = thumbIdx === 3 && remainingCount > 0;
                         return (
                           <div key={img.id} className="relative h-full w-full overflow-hidden">
                             <img
                               src={img.thumbnailUrl}
                               alt={img.title}
-                              loading="lazy"
+                              loading={idx < 8 ? 'eager' : 'lazy'}
+                              fetchPriority={idx < 4 && thumbIdx === 0 ? 'high' : undefined}
                               decoding="async"
                               draggable={false}
                               className="h-full w-full object-cover"
@@ -1063,6 +1072,7 @@ export function CategoriesView({
                           <img
                             src={pf.previewUrl}
                             alt={pf.title}
+                            decoding="async"
                             className="h-full w-full object-cover"
                           />
                         </div>
@@ -1145,30 +1155,62 @@ export function CategoriesView({
               </div>
             </form>
 
-            <div className="flex shrink-0 items-center justify-end gap-2 border-t border-zinc-800 px-5 py-3.5">
-              <button
-                type="button"
-                onClick={closeCreateModal}
-                disabled={isSubmitting}
-                className="h-10 rounded-lg border border-zinc-800 px-4 text-sm font-medium text-zinc-300 hover:bg-zinc-900 disabled:opacity-50"
-              >
-                Hủy
-              </button>
-              <button
-                type="submit"
-                form="create-album-form"
-                disabled={!name.trim() || isSubmitting}
-                className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-              >
-                <Plus className="h-4 w-4" />
-                <span>
-                  {isSubmitting
-                    ? 'Đang tạo...'
-                    : pendingFiles.length + selectedLibraryIds.length > 0
-                    ? `Tạo album (${pendingFiles.length + selectedLibraryIds.length} ảnh)`
-                    : 'Tạo album'}
-                </span>
-              </button>
+            <div className="shrink-0 space-y-2.5 border-t border-zinc-800 px-5 py-3.5">
+              {isSubmitting && createUploadProgress && (
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-xs font-medium text-zinc-300">
+                    <span>Đang tối ưu & tải ảnh lên album...</span>
+                    <span className="font-mono tabular-nums">
+                      {createUploadProgress.done}/{createUploadProgress.total}
+                    </span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+                    <div
+                      className="h-full rounded-full bg-blue-500 transition-[width] duration-150"
+                      style={{
+                        width: `${
+                          createUploadProgress.total > 0
+                            ? Math.max(
+                                6,
+                                Math.round(
+                                  (createUploadProgress.done / createUploadProgress.total) * 100
+                                )
+                              )
+                            : 100
+                        }%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={closeCreateModal}
+                  disabled={isSubmitting}
+                  className="h-10 rounded-lg border border-zinc-800 px-4 text-sm font-medium text-zinc-300 hover:bg-zinc-900 disabled:opacity-50"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="submit"
+                  form="create-album-form"
+                  disabled={!name.trim() || isSubmitting}
+                  className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  <Plus className="h-4 w-4" />
+                  <span>
+                    {isSubmitting
+                      ? createUploadProgress
+                        ? `Đang tải (${createUploadProgress.done}/${createUploadProgress.total})...`
+                        : 'Đang tạo...'
+                      : pendingFiles.length + selectedLibraryIds.length > 0
+                      ? `Tạo album (${pendingFiles.length + selectedLibraryIds.length} ảnh)`
+                      : 'Tạo album'}
+                  </span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

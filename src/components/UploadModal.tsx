@@ -30,7 +30,8 @@ interface UploadModalProps {
       title: string;
       notes: string;
       categoryId: string | null;
-    }>
+    }>,
+    onProgress?: (done: number, total: number) => void
   ) => Promise<void>;
 }
 
@@ -48,10 +49,13 @@ export function UploadModal({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
+  const pendingFilesRef = useRef<PendingFile[]>([]);
+  pendingFilesRef.current = pendingFiles;
   const [categoryId, setCategoryId] = useState<string>(defaultCategoryId || '');
   const [newCategoryName, setNewCategoryName] = useState('');
   const [showNewCategory, setShowNewCategory] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
@@ -68,7 +72,7 @@ export function UploadModal({
 
   useEffect(() => {
     return () => {
-      pendingFiles.forEach((pf) => URL.revokeObjectURL(pf.previewUrl));
+      pendingFilesRef.current.forEach((pf) => URL.revokeObjectURL(pf.previewUrl));
     };
   }, []);
 
@@ -113,6 +117,7 @@ export function UploadModal({
     if (pendingFiles.length === 0 || isSaving) return;
 
     setIsSaving(true);
+    setUploadProgress({ done: 0, total: pendingFiles.length });
     setErrorMsg(null);
     try {
       await onConfirmUpload(
@@ -121,7 +126,8 @@ export function UploadModal({
           title: pf.title.trim() || stripFileExtension(pf.file.name) || 'Ảnh mẫu',
           notes: pf.notes.trim(),
           categoryId: categoryId || null,
-        }))
+        })),
+        (done, total) => setUploadProgress({ done, total })
       );
 
       pendingFiles.forEach((pf) => URL.revokeObjectURL(pf.previewUrl));
@@ -132,6 +138,7 @@ export function UploadModal({
       setErrorMsg(`Không thể tải ảnh lên server${detail}. Vui lòng thử lại.`);
     } finally {
       setIsSaving(false);
+      setUploadProgress(null);
     }
   };
 
@@ -303,6 +310,7 @@ export function UploadModal({
                       <img
                         src={pf.previewUrl}
                         alt={pf.title}
+                        decoding="async"
                         onError={() =>
                           setPendingFiles((prev) =>
                             prev.map((x) =>
@@ -351,27 +359,55 @@ export function UploadModal({
         </form>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-3 border-t border-zinc-200 px-6 py-4 dark:border-zinc-800">
-          <button
-            type="button"
-            onClick={onClose}
-            className="h-10 rounded-lg border border-zinc-300 px-4 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
-          >
-            Hủy
-          </button>
-          <button
-            type="button"
-            disabled={pendingFiles.length === 0 || isSaving}
-            onClick={handleSubmit}
-            className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-5 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Upload className="h-4 w-4" />
-            <span>
-              {isSaving
-                ? 'Đang xử lý & lưu...'
-                : `Lưu ${pendingFiles.length > 0 ? pendingFiles.length : ''} ảnh vào kho`}
-            </span>
-          </button>
+        <div className="space-y-2.5 border-t border-zinc-200 px-6 py-4 dark:border-zinc-800">
+          {isSaving && uploadProgress && (
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                <span>Đang tối ưu & tải ảnh lên server...</span>
+                <span className="font-mono tabular-nums">
+                  {uploadProgress.done}/{uploadProgress.total}
+                </span>
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+                <div
+                  className="h-full rounded-full bg-blue-600 transition-[width] duration-150"
+                  style={{
+                    width: `${
+                      uploadProgress.total > 0
+                        ? Math.max(6, Math.round((uploadProgress.done / uploadProgress.total) * 100))
+                        : 100
+                    }%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isSaving}
+              className="h-10 rounded-lg border border-zinc-300 px-4 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+            >
+              Hủy
+            </button>
+            <button
+              type="button"
+              disabled={pendingFiles.length === 0 || isSaving}
+              onClick={handleSubmit}
+              className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-5 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Upload className="h-4 w-4" />
+              <span>
+                {isSaving
+                  ? uploadProgress
+                    ? `Đang lưu (${uploadProgress.done}/${uploadProgress.total})...`
+                    : 'Đang xử lý & lưu...'
+                  : `Lưu ${pendingFiles.length > 0 ? pendingFiles.length : ''} ảnh vào kho`}
+              </span>
+            </button>
+          </div>
         </div>
       </div>
     </div>

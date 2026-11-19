@@ -214,7 +214,8 @@ export async function uploadServerImage(record: VaultImageRecord): Promise<Vault
   const formData = new FormData();
   formData.append('file', blob, record.fileName || 'image.jpg');
   if (thumbnailBlob) {
-    formData.append('thumbnail', thumbnailBlob, 'thumb.jpg');
+    const thumbExt = thumbnailBlob.type === 'image/webp' ? 'thumb.webp' : 'thumb.jpg';
+    formData.append('thumbnail', thumbnailBlob, thumbExt);
   }
   formData.append('metadata', JSON.stringify(meta));
 
@@ -223,6 +224,32 @@ export async function uploadServerImage(record: VaultImageRecord): Promise<Vault
     body: formData,
   });
   return hydrateImageUrls((await res.json()) as VaultImageView);
+}
+
+export async function uploadServerImagesBatch(records: VaultImageRecord[]): Promise<VaultImageView[]> {
+  if (records.length === 0) return [];
+  if (records.length === 1) {
+    return [await uploadServerImage(records[0])];
+  }
+
+  const formData = new FormData();
+  const metaList = records.map((record, idx) => {
+    const { blob, thumbnailBlob, ...meta } = record;
+    formData.append(`file_${idx}`, blob, record.fileName || `image-${idx}.jpg`);
+    if (thumbnailBlob) {
+      const thumbExt = thumbnailBlob.type === 'image/webp' ? `thumb-${idx}.webp` : `thumb-${idx}.jpg`;
+      formData.append(`thumb_${idx}`, thumbnailBlob, thumbExt);
+    }
+    return meta;
+  });
+  formData.append('metadata', JSON.stringify(metaList));
+
+  const res = await apiFetch('/api/images/batch', {
+    method: 'POST',
+    body: formData,
+  });
+  const data = (await res.json()) as { images?: VaultImageView[] };
+  return (data.images || []).map(hydrateImageUrls);
 }
 
 export async function updateServerImageMetadata(

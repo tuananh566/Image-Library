@@ -7,6 +7,76 @@ export interface ProcessedImageResult {
   thumbnailBlob: Blob;
   dominantColors: string[];
   colorFamilies: string[];
+  optimizedBlob?: Blob;
+  optimizedMimeType?: string;
+  optimizedFileName?: string;
+}
+
+export interface ProcessImageOptions {
+  optimizeLargeUpload?: boolean;
+  fileName?: string;
+  mimeType?: string;
+}
+
+const THUMB_MAX_EDGE = 480;
+const UPLOAD_MAX_EDGE = 2048;
+const LARGE_UPLOAD_BYTES = 1.5 * 1024 * 1024;
+
+let cachedWebpSupport: boolean | null = null;
+
+function supportsWebpEncode(): boolean {
+  if (cachedWebpSupport !== null) return cachedWebpSupport;
+  if (typeof document === 'undefined') {
+    cachedWebpSupport = false;
+    return false;
+  }
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = 2;
+    canvas.height = 2;
+    cachedWebpSupport = canvas.toDataURL('image/webp').startsWith('data:image/webp');
+  } catch {
+    cachedWebpSupport = false;
+  }
+  return cachedWebpSupport;
+}
+
+function canvasToBlobAsync(
+  canvas: HTMLCanvasElement,
+  mimeType: string,
+  quality: number,
+  fallback: Blob
+): Promise<Blob> {
+  return new Promise((resolve) => {
+    try {
+      canvas.toBlob((result) => resolve(result || fallback), mimeType, quality);
+    } catch {
+      resolve(fallback);
+    }
+  });
+}
+
+function replaceFileExtension(fileName: string, newExt: string): string {
+  if (!fileName) return `image${newExt}`;
+  if (/\.[^/.]+$/.test(fileName)) {
+    return fileName.replace(/\.[^/.]+$/, newExt);
+  }
+  return `${fileName}${newExt}`;
+}
+
+const warmedImageUrls = new Set<string>();
+
+export function warmImageUrl(url?: string): void {
+  if (!url || typeof window === 'undefined' || warmedImageUrls.has(url)) return;
+  if (warmedImageUrls.size >= 120) {
+    const oldest = warmedImageUrls.values().next().value;
+    if (oldest) warmedImageUrls.delete(oldest);
+  }
+  warmedImageUrls.add(url);
+  const img = new Image();
+  img.decoding = 'async';
+  img.referrerPolicy = 'no-referrer';
+  img.src = url;
 }
 
 function rgbToHex(r: number, g: number, b: number): string {
@@ -158,6 +228,19 @@ function loadImageElement(blob: Blob): Promise<HTMLImageElement> {
 async function decodeDrawableImage(
   blob: Blob
 ): Promise<{ source: CanvasImageSource; width: number; height: number; close?: () => void } | null> {
+  if (typeof createImageBitmap === 'function' && blob.type !== 'image/svg+xml') {
+    try {
+      const bitmap = await createImageBitmap(blob);
+      return {
+        source: bitmap,
+        width: bitmap.width || 800,
+        height: bitmap.height || 600,
+        close: () => bitmap.close(),
+      };
+    } catch {
+      // Fallback to HTMLImageElement below
+    }
+  }
   try {
     const img = await loadImageElement(blob);
     return {
@@ -166,24 +249,14 @@ async function decodeDrawableImage(
       height: img.naturalHeight || 600,
     };
   } catch {
-    if (typeof createImageBitmap === 'function') {
-      try {
-        const bitmap = await createImageBitmap(blob);
-        return {
-          source: bitmap,
-          width: bitmap.width || 800,
-          height: bitmap.height || 600,
-          close: () => bitmap.close(),
-        };
-      } catch {
-        return null;
-      }
-    }
     return null;
   }
 }
 
-export async function processImageBlob(blob: Blob): Promise<ProcessedImageResult> {
+export async function processImageBlob(
+  blob: Blob,
+  options: ProcessImageOptions = {}
+): Promise<ProcessedImageResult> {
   const decoded = await decodeDrawableImage(blob);
   if (!decoded) {
     return {
@@ -197,75 +270,131 @@ export async function processImageBlob(blob: Blob): Promise<ProcessedImageResult
   }
 
   const { source, width, height, close } = decoded;
+  const sourceMime = (options.mimeType || blob.type || '').toLowerCase();
+  const isVectorOrAnimated =
+    sourceMime === 'image/svg+xml' || sourceMime === 'image/gif';
 
-  const ratio = width / height;
-  let aspectRatioType: AspectRatioType = 'square';
-  if (ratio > 1.12) aspectRatioType = 'landscape';
-  else if (ratio < 0.88) aspectRatioType = 'portrait';
+  let finalWidth = width;
+  let finalHeight = height;
+  let optimizedBlob: Blob | undefined;
+  let optimizedMimeType: string | undefined;
+  let optimizedFileName: string | undefined;
+  let thumbSource: CanvasImageSource = source;
 
-  // Generate compact thumbnail (max edge 640px)
-  const maxEdge = 640;
-  let thumbW = width;
-  let thumbH = height;
-  if (width > maxEdge || height > maxEdge) {
-    if (width >= height) {
-      thumbW = maxEdge;
-      thumbH = Math.max(1, Math.round((height / width) * maxEdge));
-    } else {
-      thumbH = maxEdge;
-      thumbW = Math.max(1, Math.round((width / height) * maxEdge));
+  const useWebp = supportsWebpEncode();
+  const targetEncodeMime = useWebp ? 'image/webp' : 'image/jpeg';
+  const targetEncodeExt = useWebp ? '.webp' : '.jpg';
+
+  try {
+    // Smart-optimize huge camera/raw photos (>2048px or >1.5MB) so import & preview load stay fast
+    if (
+      options.optimizeLargeUpload &&
+      !isVectorOrAnimated &&
+      (width > UPLOAD_MAX_EDGE || height > UPLOAD_MAX_EDGE || blob.size > LARGE_UPLOAD_BYTES)
+    ) {
+      let targetW = width;
+      let targetH = height;
+      if (width > UPLOAD_MAX_EDGE || height > UPLOAD_MAX_EDGE) {
+        if (width >= height) {
+          targetW = UPLOAD_MAX_EDGE;
+          targetH = Math.max(1, Math.round((height / width) * UPLOAD_MAX_EDGE));
+        } else {
+          targetH = UPLOAD_MAX_EDGE;
+          targetW = Math.max(1, Math.round((width / height) * UPLOAD_MAX_EDGE));
+        }
+      }
+
+      const uploadCanvas = document.createElement('canvas');
+      uploadCanvas.width = targetW;
+      uploadCanvas.height = targetH;
+      const uploadCtx = uploadCanvas.getContext('2d');
+      if (uploadCtx) {
+        uploadCtx.drawImage(source, 0, 0, targetW, targetH);
+        thumbSource = uploadCanvas;
+        const candidateBlob = await canvasToBlobAsync(
+          uploadCanvas,
+          targetEncodeMime,
+          0.88,
+          blob
+        );
+        if (candidateBlob !== blob && candidateBlob.size < blob.size * 0.92) {
+          optimizedBlob = candidateBlob;
+          optimizedMimeType = candidateBlob.type || targetEncodeMime;
+          optimizedFileName = options.fileName
+            ? replaceFileExtension(options.fileName, targetEncodeExt)
+            : undefined;
+          finalWidth = targetW;
+          finalHeight = targetH;
+        }
+      }
     }
-  }
 
-  const thumbCanvas = document.createElement('canvas');
-  thumbCanvas.width = thumbW;
-  thumbCanvas.height = thumbH;
-  const thumbCtx = thumbCanvas.getContext('2d');
-  if (thumbCtx) {
-    thumbCtx.drawImage(source, 0, 0, thumbW, thumbH);
-  }
+    const ratio = finalWidth / finalHeight;
+    let aspectRatioType: AspectRatioType = 'square';
+    if (ratio > 1.12) aspectRatioType = 'landscape';
+    else if (ratio < 0.88) aspectRatioType = 'portrait';
 
-  const thumbnailBlob = await new Promise<Blob>((resolve) => {
-    try {
-      thumbCanvas.toBlob(
-        (result) => resolve(result || blob),
-        'image/jpeg',
-        0.86
-      );
-    } catch {
-      resolve(blob);
+    // Generate compact thumbnail (max edge 480px)
+    let thumbW = finalWidth;
+    let thumbH = finalHeight;
+    if (finalWidth > THUMB_MAX_EDGE || finalHeight > THUMB_MAX_EDGE) {
+      if (finalWidth >= finalHeight) {
+        thumbW = THUMB_MAX_EDGE;
+        thumbH = Math.max(1, Math.round((finalHeight / finalWidth) * THUMB_MAX_EDGE));
+      } else {
+        thumbH = THUMB_MAX_EDGE;
+        thumbW = Math.max(1, Math.round((finalWidth / finalHeight) * THUMB_MAX_EDGE));
+      }
     }
-  });
 
-  // Extract palette on tiny 48x48 canvas
-  const sampleCanvas = document.createElement('canvas');
-  sampleCanvas.width = 48;
-  sampleCanvas.height = 48;
-  const sampleCtx = sampleCanvas.getContext('2d');
-  let dominantColors: string[] = [];
-  let colorFamilies: string[] = [];
-
-  if (sampleCtx) {
-    try {
-      sampleCtx.drawImage(source, 0, 0, 48, 48);
-      const palette = extractPalette(sampleCtx, 48, 48);
-      dominantColors = palette.dominantColors;
-      colorFamilies = palette.colorFamilies;
-    } catch {
-      // Ignore tainted/unsupported canvas readback
+    const thumbCanvas = document.createElement('canvas');
+    thumbCanvas.width = thumbW;
+    thumbCanvas.height = thumbH;
+    const thumbCtx = thumbCanvas.getContext('2d');
+    if (thumbCtx) {
+      thumbCtx.drawImage(thumbSource, 0, 0, thumbW, thumbH);
     }
+
+    const thumbnailBlob = await canvasToBlobAsync(
+      thumbCanvas,
+      targetEncodeMime,
+      0.82,
+      optimizedBlob || blob
+    );
+
+    // Extract palette directly from the downscaled thumbCanvas (avoids re-sampling full-res source)
+    const sampleCanvas = document.createElement('canvas');
+    sampleCanvas.width = 48;
+    sampleCanvas.height = 48;
+    const sampleCtx = sampleCanvas.getContext('2d');
+    let dominantColors: string[] = [];
+    let colorFamilies: string[] = [];
+
+    if (sampleCtx) {
+      try {
+        sampleCtx.drawImage(thumbCanvas, 0, 0, 48, 48);
+        const palette = extractPalette(sampleCtx, 48, 48);
+        dominantColors = palette.dominantColors;
+        colorFamilies = palette.colorFamilies;
+      } catch {
+        // Ignore tainted/unsupported canvas readback
+      }
+    }
+
+    return {
+      width: finalWidth,
+      height: finalHeight,
+      aspectRatioType,
+      thumbnailBlob,
+      dominantColors,
+      colorFamilies,
+      optimizedBlob,
+      optimizedMimeType,
+      optimizedFileName,
+    };
+  } finally {
+    close?.();
   }
-
-  close?.();
-
-  return {
-    width,
-    height,
-    aspectRatioType,
-    thumbnailBlob,
-    dominantColors,
-    colorFamilies,
-  };
 }
 
 export function generateId(): string {

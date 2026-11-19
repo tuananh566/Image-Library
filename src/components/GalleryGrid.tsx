@@ -1,6 +1,6 @@
 import { Check, ImageIcon, Upload } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { formatFileSize } from '../lib/imageProcessor';
+import { formatFileSize, warmImageUrl } from '../lib/imageProcessor';
 import type { Category, ScoredImage, ViewMode } from '../types/vault';
 
 interface GalleryGridProps {
@@ -23,10 +23,14 @@ function ResilientThumbnail({
   src,
   alt,
   className,
+  priority = false,
+  highFetchPriority = false,
 }: {
   src: string;
   alt: string;
   className?: string;
+  priority?: boolean;
+  highFetchPriority?: boolean;
 }) {
   const [failed, setFailed] = useState(false);
 
@@ -43,7 +47,8 @@ function ResilientThumbnail({
     <img
       src={src}
       alt={alt}
-      loading="lazy"
+      loading={priority ? 'eager' : 'lazy'}
+      fetchPriority={highFetchPriority ? 'high' : undefined}
       decoding="async"
       draggable={false}
       referrerPolicy="no-referrer"
@@ -276,7 +281,7 @@ export function GalleryGrid({
           : `grid ${gridColsClass} gap-1.5 md:portrait:gap-2 md:landscape:gap-2`
       }
     >
-      {items.map(({ image }) => {
+      {items.map(({ image }, index) => {
         const isSelected = selectedIds.includes(image.id);
 
         return (
@@ -295,7 +300,13 @@ export function GalleryGrid({
             <div
               role="button"
               tabIndex={0}
-              onPointerDown={(e) => handleCardPointerDown(e, image.id)}
+              onMouseEnter={() => {
+                if (!isBatchMode) warmImageUrl(image.fullUrl);
+              }}
+              onPointerDown={(e) => {
+                if (!isBatchMode) warmImageUrl(image.fullUrl);
+                handleCardPointerDown(e, image.id);
+              }}
               onPointerMove={handleCardPointerMove}
               onPointerUp={clearLongPressTimer}
               onPointerCancel={clearLongPressTimer}
@@ -320,6 +331,8 @@ export function GalleryGrid({
               <ResilientThumbnail
                 src={image.thumbnailUrl}
                 alt={image.title}
+                priority={index < 12}
+                highFetchPriority={index < 6}
                 className={`w-full transition-transform duration-200 group-hover:scale-[1.02] ${
                   isMasonry ? 'h-auto block' : 'h-full object-cover'
                 }`}

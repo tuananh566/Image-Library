@@ -249,12 +249,50 @@ function ImageInspectorContent({
       });
     }
 
+    const preloaded = preloadCacheRef.current.get(image.id);
     if (image.fullUrl) {
-      setFullUrl(image.fullUrl);
-      return;
+      if (
+        preloaded?.fullUrl === image.fullUrl &&
+        preloaded.fullImg?.complete &&
+        preloaded.fullImg.naturalWidth > 0
+      ) {
+        setFullUrl(image.fullUrl);
+        return;
+      }
+      // Show already-cached thumbnail immediately while loading & decoding full-res image
+      setFullUrl(image.thumbnailUrl || image.fullUrl);
+      let cancelled = false;
+      const hiRes = new Image();
+      hiRes.decoding = 'async';
+      hiRes.referrerPolicy = 'no-referrer';
+      const commitHiRes = () => {
+        if (cancelled) return;
+        const existing = preloadCacheRef.current.get(image.id);
+        preloadCacheRef.current.set(image.id, {
+          fullUrl: image.fullUrl!,
+          isObjectUrl: false,
+          fullImg: hiRes,
+          thumbImg: existing?.thumbImg,
+        });
+        setFullUrl(image.fullUrl!);
+      };
+      hiRes.onload = () => {
+        if (typeof hiRes.decode === 'function') {
+          void hiRes.decode().catch(() => {}).finally(commitHiRes);
+        } else {
+          commitHiRes();
+        }
+      };
+      hiRes.onerror = commitHiRes;
+      hiRes.src = image.fullUrl;
+      if (hiRes.complete && hiRes.naturalWidth > 0) {
+        commitHiRes();
+      }
+      return () => {
+        cancelled = true;
+      };
     }
 
-    const preloaded = preloadCacheRef.current.get(image.id);
     if (preloaded?.fullUrl) {
       setFullUrl(preloaded.fullUrl);
       return;
@@ -754,7 +792,7 @@ function ImageInspectorContent({
     URL.revokeObjectURL(url);
   };
 
-  const displaySrc = image.fullUrl || fullUrl || image.thumbnailUrl;
+  const displaySrc = fullUrl || image.thumbnailUrl || image.fullUrl || '';
   const formattedDate = new Intl.DateTimeFormat('vi-VN', {
     dateStyle: 'medium',
     timeStyle: 'short',

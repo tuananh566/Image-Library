@@ -54,7 +54,7 @@ import {
   syncLocalIndexedDbToServer,
   updateServerImageMetadata,
   updateServerOrder,
-  uploadServerImage,
+  uploadServerImagesBatch,
 } from './lib/serverVault';
 import { getLocalDateKey } from './lib/orderFilters';
 import { filterAndScoreImages } from './lib/smartSearch';
@@ -596,6 +596,14 @@ export default function App() {
     }));
   };
 
+  const getNextCategoryOrder = useCallback(() => {
+    const maxOrder = categories.reduce(
+      (max, c) => Math.max(max, Number.isFinite(c.order) ? c.order : -1),
+      -1
+    );
+    return maxOrder + 1;
+  }, [categories]);
+
   // Handlers (Admin-guarded mutations)
   const handleQuickCreateCategory = async (name: string): Promise<Category> => {
     if (!isAdmin) throw new Error('Admin permission required');
@@ -606,12 +614,95 @@ export default function App() {
       name: name.trim(),
       description: '',
       color: randomColor,
-      order: categories.length,
+      order: getNextCategoryOrder(),
       createdAt: Date.now(),
     };
     await saveServerCategory(newCat);
     await reloadVault();
     return newCat;
+  };
+
+  const processAndUploadImageBatch = async (
+    items: Array<{
+      file: File;
+      title: string;
+      notes: string;
+      categoryId: string | null;
+    }>,
+    onProgress?: (done: number, total: number) => void
+  ) => {
+    const total = items.length;
+    if (total === 0) return;
+
+    const baseTime = Date.now();
+    const CHUNK_SIZE = 6;
+    const PROCESS_CONCURRENCY = 3;
+    let processedCount = 0;
+
+    onProgress?.(0, total);
+
+    for (let start = 0; start < total; start += CHUNK_SIZE) {
+      const slice = items.slice(start, start + CHUNK_SIZE);
+      const records = new Array<VaultImageRecord>(slice.length);
+      let cursor = 0;
+
+      const workerCount = Math.min(PROCESS_CONCURRENCY, slice.length);
+      await Promise.all(
+        Array.from({ length: workerCount }, async () => {
+          while (cursor < slice.length) {
+            const localIdx = cursor++;
+            const globalIdx = start + localIdx;
+            const item = slice[localIdx];
+            const sourceMime = inferImageMimeType(item.file);
+            const processed = await processImageBlob(item.file, {
+              optimizeLargeUpload: true,
+              fileName: item.file.name,
+              mimeType: sourceMime,
+            });
+            const uploadBlob = processed.optimizedBlob || item.file;
+            const uploadMime = processed.optimizedMimeType || sourceMime;
+            const uploadFileName =
+              processed.optimizedFileName ||
+              item.file.name ||
+              `anh-mau-${baseTime + globalIdx}.jpg`;
+
+            records[localIdx] = {
+              id: generateId(),
+              title: item.title,
+              fileName: uploadFileName,
+              notes: item.notes,
+              categoryId: item.categoryId,
+              tags: [],
+              width: processed.width,
+              height: processed.height,
+              size: uploadBlob.size,
+              mimeType: uploadMime,
+              aspectRatioType: processed.aspectRatioType,
+              dominantColors: processed.dominantColors,
+              colorFamilies: processed.colorFamilies,
+              isFavorite: false,
+              createdAt: baseTime + globalIdx,
+              updatedAt: baseTime + globalIdx,
+              blob: uploadBlob,
+              thumbnailBlob: processed.thumbnailBlob,
+            };
+
+            processedCount += 1;
+            // Reserve final step for network batch commit completion
+            onProgress?.(Math.min(processedCount, Math.max(0, total - 1)), total);
+          }
+        })
+      );
+
+      const uploadedViews = await uploadServerImagesBatch(records);
+      if (uploadedViews.length > 0) {
+        setImages((prev) => {
+          const uploadedIds = new Set(uploadedViews.map((v) => v.id));
+          return [...uploadedViews, ...prev.filter((img) => !uploadedIds.has(img.id))];
+        });
+      }
+      onProgress?.(Math.min(start + slice.length, total), total);
+    }
   };
 
   const handleFullCreateCategory = async (data: {
@@ -620,6 +711,7 @@ export default function App() {
     color: string;
     newFiles?: File[];
     existingImageIds?: string[];
+    onProgress?: (done: number, total: number) => void;
   }) => {
     if (!isAdmin) return;
     const newCat: Category = {
@@ -627,7 +719,7 @@ export default function App() {
       name: data.name,
       description: data.description,
       color: data.color,
-      order: categories.length,
+      order: getNextCategoryOrder(),
       createdAt: Date.now(),
     };
     await saveServerCategory(newCat);
@@ -638,32 +730,15 @@ export default function App() {
       }
 
       if (data.newFiles && data.newFiles.length > 0) {
-        const now = Date.now();
-        for (let i = 0; i < data.newFiles.length; i++) {
-          const file = data.newFiles[i];
-          const processed = await processImageBlob(file);
-          const record: VaultImageRecord = {
-            id: generateId(),
+        await processAndUploadImageBatch(
+          data.newFiles.map((file, i) => ({
+            file,
             title: stripFileExtension(file.name) || `Ảnh mẫu ${i + 1}`,
-            fileName: file.name || `anh-mau-${now + i}.jpg`,
             notes: '',
             categoryId: newCat.id,
-            tags: [],
-            width: processed.width,
-            height: processed.height,
-            size: file.size,
-            mimeType: inferImageMimeType(file),
-            aspectRatioType: processed.aspectRatioType,
-            dominantColors: processed.dominantColors,
-            colorFamilies: processed.colorFamilies,
-            isFavorite: false,
-            createdAt: now + i,
-            updatedAt: now + i,
-            blob: file,
-            thumbnailBlob: processed.thumbnailBlob,
-          };
-          await uploadServerImage(record);
-        }
+          })),
+          data.onProgress
+        );
       }
     } finally {
       await reloadVault();
@@ -676,35 +751,11 @@ export default function App() {
       title: string;
       notes: string;
       categoryId: string | null;
-    }>
+    }>,
+    onProgress?: (done: number, total: number) => void
   ) => {
     if (!isAdmin) throw new Error('Admin permission required');
-    const now = Date.now();
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      const processed = await processImageBlob(item.file);
-      const record: VaultImageRecord = {
-        id: generateId(),
-        title: item.title,
-        fileName: item.file.name || `anh-mau-${now + i}.jpg`,
-        notes: item.notes,
-        categoryId: item.categoryId,
-        tags: [],
-        width: processed.width,
-        height: processed.height,
-        size: item.file.size,
-        mimeType: inferImageMimeType(item.file),
-        aspectRatioType: processed.aspectRatioType,
-        dominantColors: processed.dominantColors,
-        colorFamilies: processed.colorFamilies,
-        isFavorite: false,
-        createdAt: now + i,
-        updatedAt: now + i,
-        blob: item.file,
-        thumbnailBlob: processed.thumbnailBlob,
-      };
-      await uploadServerImage(record);
-    }
+    await processAndUploadImageBatch(items, onProgress);
     setDroppedFiles([]);
     await reloadVault();
   };
