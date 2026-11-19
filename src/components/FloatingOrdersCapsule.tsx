@@ -30,7 +30,7 @@ export function FloatingOrdersCapsule({
   } ${showOrdersDesktop ? 'md:inline-flex' : 'md:hidden'}`;
 
   return (
-    <div className="absolute bottom-5 right-5 z-30 flex items-center gap-2.5 sm:bottom-6 sm:right-6">
+    <div className="absolute bottom-[max(1.25rem,env(safe-area-inset-bottom))] right-5 z-30 flex items-center gap-2.5 sm:bottom-6 sm:right-6">
       <button
         type="button"
         onClick={onOpenOrders}

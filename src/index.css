@@ -54,12 +54,12 @@
 
 @media (display-mode: standalone) {
   :root {
-    --app-safe-top: max(env(safe-area-inset-top, 0px), 3.25rem);
+    --app-safe-top: max(calc(env(safe-area-inset-top, 0px) + 2.5rem), 4rem);
   }
 }
 
 html.ios-standalone {
-  --app-safe-top: max(env(safe-area-inset-top, 0px), 3.25rem);
+  --app-safe-top: max(calc(env(safe-area-inset-top, 0px) + 2.5rem), 4rem);
 }
 
 .standalone-safe-top {

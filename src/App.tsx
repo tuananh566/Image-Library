@@ -692,7 +692,7 @@ export default function App() {
 
   if (deviceGateState === 'checking') {
     return (
-      <div className="flex h-screen w-full items-center justify-center bg-zinc-950 text-zinc-300">
+      <div className="flex h-dvh w-full items-center justify-center bg-zinc-950 text-zinc-300">
         <div className="flex flex-col items-center gap-3">
           <div className="h-7 w-7 animate-spin rounded-full border-2 border-zinc-700 border-t-blue-500" />
           <p className="text-sm font-medium text-zinc-400">
@@ -721,7 +721,7 @@ export default function App() {
 
   return (
     <div
-      className="flex h-screen flex-col overflow-hidden bg-zinc-950 text-zinc-100"
+      className="flex h-dvh flex-col overflow-hidden bg-zinc-950 text-zinc-100"
       onDragOver={(e) => {
         if (!isAdmin) return;
         if (e.dataTransfer.types.includes('Files')) {

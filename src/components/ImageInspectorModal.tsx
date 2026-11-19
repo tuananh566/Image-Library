@@ -640,7 +640,7 @@ function ImageInspectorContent({
             type="button"
             onClick={onClose}
             aria-label="Đóng trình xem ảnh"
-            className="absolute left-4 top-4 z-20 inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/15 bg-zinc-900/75 text-zinc-100 shadow-lg backdrop-blur-xl transition-colors hover:bg-zinc-800"
+            className="absolute left-4 top-[calc(1rem+var(--app-safe-top))] z-20 inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/15 bg-zinc-900/75 text-zinc-100 shadow-lg backdrop-blur-xl transition-colors hover:bg-zinc-800"
           >
             <X className="h-5 w-5" />
           </button>
@@ -727,7 +727,7 @@ function ImageInspectorContent({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 10 }}
             transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-            className="absolute bottom-5 left-1/2 z-20 flex w-max max-w-[calc(100%-2rem)] -translate-x-1/2 flex-col items-center gap-2.5"
+            className="absolute bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-1/2 z-20 flex w-max max-w-[calc(100%-2rem)] -translate-x-1/2 flex-col items-center gap-2.5"
           >
             {images.length > 0 && (
               <div
@@ -880,7 +880,7 @@ function ImageInspectorContent({
               }}
               className="fixed inset-y-0 right-0 z-30 flex w-full max-w-[380px] flex-col border-l border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
             >
-              <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-3.5 dark:border-zinc-800">
+              <div className="flex items-center justify-between border-b border-zinc-200 px-5 pb-3.5 pt-[calc(0.875rem+var(--app-safe-top))] dark:border-zinc-800">
                 <div className="flex items-center gap-2.5">
                   <h2 className="font-display text-sm font-semibold text-zinc-950 dark:text-zinc-50">
                     Thông tin ảnh
