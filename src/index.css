@@ -47,3 +47,21 @@
 .tabular-nums {
   font-variant-numeric: tabular-nums;
 }
+
+:root {
+  --app-safe-top: env(safe-area-inset-top, 0px);
+}
+
+@media (display-mode: standalone) {
+  :root {
+    --app-safe-top: max(env(safe-area-inset-top, 0px), 3.25rem);
+  }
+}
+
+html.ios-standalone {
+  --app-safe-top: max(env(safe-area-inset-top, 0px), 3.25rem);
+}
+
+.standalone-safe-top {
+  padding-top: var(--app-safe-top);
+}

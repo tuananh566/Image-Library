@@ -358,7 +358,7 @@ export function Sidebar({
                 }}
                 className="relative z-10 flex h-full w-72 max-w-[85vw] flex-col border-r border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
               >
-                <div className="flex shrink-0 items-center justify-between border-b border-zinc-800 px-4 pt-[env(safe-area-inset-top)]">
+                <div className="standalone-safe-top flex shrink-0 items-center justify-between border-b border-zinc-800 px-4">
                   <div className="flex h-14 w-full items-center justify-between">
                     <span className="font-display text-sm font-semibold text-zinc-50">
                       Album & Bộ lọc
