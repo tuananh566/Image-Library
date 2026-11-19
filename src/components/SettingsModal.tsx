@@ -304,7 +304,6 @@ export function SettingsModal({
                     <div className="relative flex-1">
                       <input
                         type={showPassword ? 'text' : 'password'}
-                        inputMode="numeric"
                         value={adminPassword}
                         onChange={(e) => {
                           setAdminPassword(e.target.value);

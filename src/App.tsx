@@ -1069,7 +1069,7 @@ export default function App() {
         isAdmin={isAdmin}
         adminExpiresAt={adminExpiresAt}
         onAuthenticateAdmin={(password) => {
-          if (password.trim() === '123456') {
+          if (password.trim() === 'admin') {
             setAdminExpiresAt(grantAdminSession());
             return true;
           }
