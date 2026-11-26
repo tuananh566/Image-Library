@@ -1,4 +1,5 @@
 import type { Category, VaultImageRecord } from '../types/vault';
+import { dataUrlToBlob } from './backupStreaming';
 import { generateId, processImageBlob } from './imageProcessor';
 
 const DB_NAME = 'KhoAnhLocalVault';
@@ -202,6 +203,8 @@ function blobToBase64(blob: Blob): Promise<string> {
 }
 
 async function base64ToBlob(dataUrl: string): Promise<Blob> {
+  const blob = dataUrlToBlob(dataUrl);
+  if (blob) return blob;
   const res = await fetch(dataUrl);
   return res.blob();
 }

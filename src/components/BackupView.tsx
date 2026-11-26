@@ -1,15 +1,17 @@
 import { Download, HardDrive, RotateCcw, ShieldCheck, Trash2, Upload } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { formatFileSize } from '../lib/imageProcessor';
+import type { BackupImportProgress, BackupImportResult } from '../lib/serverVault';
 import type { StorageStats } from '../types/vault';
 
 interface BackupViewProps {
   stats: StorageStats;
   onExportBackup: () => Promise<void>;
-  onImportBackup: (file: File, mode: 'merge' | 'replace') => Promise<{
-    importedCategories: number;
-    importedImages: number;
-  }>;
+  onImportBackup: (
+    file: File,
+    mode: 'merge' | 'replace',
+    onProgress?: (progress: BackupImportProgress) => void
+  ) => Promise<BackupImportResult>;
   onRestoreSampleVault: () => Promise<void>;
   onClearAllData: () => Promise<void>;
   pendingLocalSync?: { categories: number; images: number };
@@ -33,6 +35,8 @@ export function BackupView({
   const importInputRef = useRef<HTMLInputElement>(null);
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge');
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [statusKind, setStatusKind] = useState<'info' | 'error'>('info');
+  const [importProgress, setImportProgress] = useState<BackupImportProgress | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
 
@@ -40,13 +44,19 @@ export function BackupView({
     if (!onSyncLocalToServer) return;
     setIsBusy(true);
     setStatusMessage(null);
+    setStatusKind('info');
     try {
       const res = await onSyncLocalToServer();
       setStatusMessage(
         `Đã đồng bộ ${res.syncedImages} ảnh và ${res.syncedCategories} danh mục từ trình duyệt này lên server.`
       );
-    } catch {
-      setStatusMessage('Có lỗi khi đồng bộ dữ liệu cục bộ lên server.');
+    } catch (err) {
+      setStatusKind('error');
+      setStatusMessage(
+        err instanceof Error && err.message
+          ? `Lỗi đồng bộ: ${err.message}`
+          : 'Có lỗi khi đồng bộ dữ liệu cục bộ lên server.'
+      );
     } finally {
       setIsBusy(false);
     }
@@ -54,12 +64,18 @@ export function BackupView({
 
   const handleExport = async () => {
     setIsBusy(true);
-    setStatusMessage(null);
+    setStatusKind('info');
+    setStatusMessage('Đang đóng gói và tải xuống tệp sao lưu JSON...');
     try {
       await onExportBackup();
       setStatusMessage('Đã xuất tệp sao lưu JSON xuống máy tính của bạn.');
-    } catch {
-      setStatusMessage('Có lỗi khi tạo tệp sao lưu.');
+    } catch (err) {
+      setStatusKind('error');
+      setStatusMessage(
+        err instanceof Error && err.message
+          ? `Có lỗi khi tạo tệp sao lưu: ${err.message}`
+          : 'Có lỗi khi tạo tệp sao lưu.'
+      );
     } finally {
       setIsBusy(false);
     }
@@ -69,15 +85,30 @@ export function BackupView({
     const file = e.target.files?.[0];
     if (!file) return;
     setIsBusy(true);
+    setStatusKind('info');
     setStatusMessage(null);
+    setImportProgress({ phase: 'reading', importedImages: 0, readPercent: 0 });
     try {
-      const res = await onImportBackup(file, importMode);
+      const res = await onImportBackup(file, importMode, (progress) => {
+        setImportProgress(progress);
+      });
+      const orderPart =
+        res.importedOrders && res.importedOrders > 0
+          ? ` và ${res.importedOrders} đơn hàng`
+          : '';
       setStatusMessage(
-        `Đã khôi phục ${res.importedImages} ảnh mẫu và ${res.importedCategories} danh mục.`
+        `Đã khôi phục ${res.importedImages} ảnh mẫu, ${res.importedCategories} danh mục${orderPart}.`
       );
-    } catch {
-      setStatusMessage('Tệp sao lưu không hợp lệ hoặc bị hỏng.');
+    } catch (err) {
+      setStatusKind('error');
+      const detail = err instanceof Error ? err.message : '';
+      setStatusMessage(
+        detail
+          ? `Không thể nhập tệp sao lưu: ${detail}`
+          : 'Tệp sao lưu không hợp lệ hoặc bị hỏng.'
+      );
     } finally {
+      setImportProgress(null);
       setIsBusy(false);
       e.target.value = '';
     }
@@ -85,6 +116,7 @@ export function BackupView({
 
   const handleRestoreSamples = async () => {
     setIsBusy(true);
+    setStatusKind('info');
     setStatusMessage(null);
     try {
       await onRestoreSampleVault();
@@ -96,6 +128,7 @@ export function BackupView({
 
   const handleClearAll = async () => {
     setIsBusy(true);
+    setStatusKind('info');
     setStatusMessage(null);
     try {
       await onClearAllData();
@@ -123,8 +156,33 @@ export function BackupView({
         </p>
       </div>
 
+      {importProgress && (
+        <div className="space-y-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950/50 dark:text-blue-100">
+          <div className="flex items-center justify-between gap-2 text-xs font-medium">
+            <span>
+              {importProgress.phase === 'committing'
+                ? `Đang lưu ${importProgress.importedImages} ảnh vào thư viện...`
+                : `Đang đọc & khôi phục dữ liệu (${importProgress.importedImages} ảnh đã tải lên)...`}
+            </span>
+            <span className="tabular-nums">{importProgress.readPercent}%</span>
+          </div>
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-blue-200 dark:bg-blue-900">
+            <div
+              className="h-full bg-blue-600 transition-all duration-200 dark:bg-blue-400"
+              style={{ width: `${Math.max(4, importProgress.readPercent)}%` }}
+            />
+          </div>
+        </div>
+      )}
+
       {statusMessage && (
-        <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-800 dark:border-blue-900 dark:bg-blue-950/50 dark:text-blue-200">
+        <div
+          className={`rounded-xl border px-4 py-3 text-sm font-medium ${
+            statusKind === 'error'
+              ? 'border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-900 dark:bg-rose-950/50 dark:text-rose-200'
+              : 'border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-900 dark:bg-blue-950/50 dark:text-blue-200'
+          }`}
+        >
           {statusMessage}
         </div>
       )}

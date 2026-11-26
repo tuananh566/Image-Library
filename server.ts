@@ -86,10 +86,12 @@ const DATA_DIR = path.resolve(process.cwd(), process.env.DATA_DIR || 'data');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const THUMBS_DIR = path.join(DATA_DIR, 'thumbs');
 const ORDER_IMAGES_DIR = path.join(DATA_DIR, 'order-images');
+const RESTORE_STAGING_DIR = path.join(DATA_DIR, 'restore-staging');
 const VAULT_FILE = path.join(DATA_DIR, 'vault.json');
 const TRUSTED_DEVICES_FILE = path.join(DATA_DIR, 'trusted-devices.json');
 const UPDATE_STATE_FILE = path.join(DATA_DIR, 'update-state.json');
 const PRE_UPDATE_BACKUP_DIR = path.join(DATA_DIR, 'pre-update-backups');
+const ACTIVITY_LOG_FILE = path.join(DATA_DIR, 'server-activity.log');
 const DEFAULT_GITHUB_REPO = process.env.GITHUB_REPO || 'tuananh566/Image-Library';
 const DEFAULT_GITHUB_BRANCH = process.env.GITHUB_BRANCH || 'main';
 const DEVICE_VERIFY_CODE = process.env.DEVICE_VERIFY_CODE || '123456';
@@ -260,6 +262,251 @@ function broadcastEvent(type: 'vault-updated' | 'devices-updated'): void {
 
 function broadcastVaultUpdated(): void {
   broadcastEvent('vault-updated');
+}
+
+type ActivityLogLevel = 'info' | 'warn' | 'error';
+type ActivityLogCategory =
+  | 'system'
+  | 'device'
+  | 'image'
+  | 'category'
+  | 'order'
+  | 'backup'
+  | 'github'
+  | 'http';
+
+interface ServerActivityLogEntry {
+  id: string;
+  ts: number;
+  level: ActivityLogLevel;
+  category: ActivityLogCategory;
+  action: string;
+  detail?: string;
+  deviceName?: string;
+  ip?: string;
+  method?: string;
+  path?: string;
+  status?: number;
+  durationMs?: number;
+}
+
+const SERVER_STARTED_AT = Date.now();
+const MAX_ACTIVITY_LOGS = 600;
+let activityLogs: ServerActivityLogEntry[] = [];
+let activityLogWriteQueue: Promise<unknown> = Promise.resolve();
+
+function broadcastActivityLog(entry: ServerActivityLogEntry): void {
+  const payload = `data: ${JSON.stringify({ type: 'activity-log', entry, ts: Date.now() })}\n\n`;
+  for (const res of sseClients) {
+    try {
+      res.write(payload);
+    } catch {
+      sseClients.delete(res);
+    }
+  }
+}
+
+async function loadActivityLogs(): Promise<void> {
+  try {
+    await fsp.mkdir(DATA_DIR, { recursive: true });
+    if (!fs.existsSync(ACTIVITY_LOG_FILE)) return;
+    const raw = await fsp.readFile(ACTIVITY_LOG_FILE, 'utf8');
+    const lines = raw.split('\n').filter(Boolean);
+    const parsed: ServerActivityLogEntry[] = [];
+    for (let i = lines.length - 1; i >= 0 && parsed.length < MAX_ACTIVITY_LOGS; i--) {
+      try {
+        const item = JSON.parse(lines[i]) as ServerActivityLogEntry;
+        if (item && item.id && item.action && typeof item.ts === 'number') {
+          parsed.push(item);
+        }
+      } catch {
+        // Skip malformed line
+      }
+    }
+    activityLogs = parsed;
+  } catch {
+    // Ignore log read errors
+  }
+}
+
+function enqueueLogFileWrite(task: () => Promise<void>): void {
+  activityLogWriteQueue = activityLogWriteQueue.then(task).catch(() => {});
+}
+
+function recordActivityLog(
+  input: Omit<ServerActivityLogEntry, 'id' | 'ts'> & { ts?: number }
+): ServerActivityLogEntry {
+  const entry: ServerActivityLogEntry = {
+    id: crypto.randomUUID(),
+    ts: input.ts || Date.now(),
+    level: input.level,
+    category: input.category,
+    action: input.action,
+    ...(input.detail ? { detail: input.detail } : {}),
+    ...(input.deviceName ? { deviceName: input.deviceName } : {}),
+    ...(input.ip ? { ip: input.ip } : {}),
+    ...(input.method ? { method: input.method } : {}),
+    ...(input.path ? { path: input.path } : {}),
+    ...(input.status !== undefined ? { status: input.status } : {}),
+    ...(input.durationMs !== undefined ? { durationMs: input.durationMs } : {}),
+  };
+
+  activityLogs.unshift(entry);
+  if (activityLogs.length > MAX_ACTIVITY_LOGS) {
+    activityLogs.length = MAX_ACTIVITY_LOGS;
+  }
+
+  enqueueLogFileWrite(async () => {
+    await fsp.mkdir(DATA_DIR, { recursive: true });
+    await fsp.appendFile(ACTIVITY_LOG_FILE, `${JSON.stringify(entry)}\n`, 'utf8');
+    const stat = await fsp.stat(ACTIVITY_LOG_FILE).catch(() => null);
+    if (stat && stat.size > 1_500_000) {
+      const recentLines = activityLogs
+        .slice(0, MAX_ACTIVITY_LOGS)
+        .reverse()
+        .map((e) => JSON.stringify(e))
+        .join('\n');
+      const tmp = `${ACTIVITY_LOG_FILE}.tmp`;
+      await fsp.writeFile(tmp, recentLines ? `${recentLines}\n` : '', 'utf8');
+      await fsp.rename(tmp, ACTIVITY_LOG_FILE);
+    }
+  });
+
+  broadcastActivityLog(entry);
+  return entry;
+}
+
+async function clearActivityLogs(): Promise<void> {
+  activityLogs = [];
+  await new Promise<void>((resolve) => {
+    enqueueLogFileWrite(async () => {
+      await fsp.mkdir(DATA_DIR, { recursive: true });
+      await fsp.writeFile(ACTIVITY_LOG_FILE, '', 'utf8');
+      resolve();
+    });
+  });
+}
+
+function describeApiActivity(
+  method: string,
+  reqPath: string,
+  status: number
+): { category: ActivityLogCategory; action: string; skip?: boolean } {
+  const p = reqPath.split('?')[0];
+
+  if (
+    p === '/api/health' ||
+    p === '/api/events' ||
+    p.startsWith('/api/files/') ||
+    p === '/api/system/logs'
+  ) {
+    return { category: 'http', action: '', skip: true };
+  }
+
+  if (p === '/api/device/status') {
+    if (status < 400) return { category: 'device', action: '', skip: true };
+    return { category: 'device', action: 'Kiểm tra thiết bị thất bại' };
+  }
+
+  if (p === '/api/vault' && method === 'GET') {
+    if (status < 400) return { category: 'http', action: '', skip: true };
+    return { category: 'system', action: 'Tải dữ liệu kho thất bại' };
+  }
+
+  if (p === '/api/devices' && method === 'GET') {
+    if (status < 400) return { category: 'device', action: '', skip: true };
+  }
+
+  if (p === '/api/device/verify') {
+    return {
+      category: 'device',
+      action: status >= 400 ? 'Xác thực thiết bị thất bại' : 'Xác thực thiết bị mới',
+    };
+  }
+  if (p === '/api/device/logout') {
+    return { category: 'device', action: 'Quên / đăng xuất thiết bị' };
+  }
+  if (p.startsWith('/api/devices/')) {
+    if (method === 'DELETE') return { category: 'device', action: 'Thu hồi quyền thiết bị' };
+    if (method === 'PATCH') return { category: 'device', action: 'Đổi tên thiết bị' };
+  }
+
+  if (p === '/api/images' && method === 'POST') {
+    return { category: 'image', action: 'Tải lên ảnh mẫu' };
+  }
+  if (p === '/api/images/batch' && method === 'POST') {
+    return { category: 'image', action: 'Tải lên hàng loạt ảnh mẫu' };
+  }
+  if (p === '/api/images/batch-update') {
+    return { category: 'image', action: 'Cập nhật hàng loạt ảnh' };
+  }
+  if (p === '/api/images/batch-delete') {
+    return { category: 'image', action: 'Xóa ảnh mẫu' };
+  }
+  if (p.startsWith('/api/images/') && method === 'PATCH') {
+    return { category: 'image', action: 'Cập nhật thông tin ảnh' };
+  }
+
+  if (p === '/api/categories' && method === 'POST') {
+    return { category: 'category', action: 'Lưu danh mục / album' };
+  }
+  if (p === '/api/categories/reorder') {
+    return { category: 'category', action: 'Sắp xếp thứ tự danh mục' };
+  }
+  if (p === '/api/categories/batch-delete' || (p.startsWith('/api/categories/') && method === 'DELETE')) {
+    return { category: 'category', action: 'Xóa danh mục / album' };
+  }
+
+  if (p === '/api/orders' && method === 'POST') {
+    return { category: 'order', action: 'Tạo đơn hàng mới' };
+  }
+  if (p.startsWith('/api/orders/') && (method === 'PUT' || method === 'PATCH')) {
+    return { category: 'order', action: 'Cập nhật đơn hàng' };
+  }
+  if (p.startsWith('/api/orders/') && method === 'DELETE') {
+    return { category: 'order', action: 'Xóa đơn hàng' };
+  }
+
+  if (p === '/api/vault/backup') {
+    return { category: 'backup', action: 'Xuất tệp sao lưu JSON' };
+  }
+  if (p === '/api/vault/restore/begin') {
+    return { category: 'backup', action: 'Bắt đầu khôi phục sao lưu' };
+  }
+  if (p === '/api/vault/restore/batch') {
+    if (status < 400) return { category: 'backup', action: '', skip: true };
+    return { category: 'backup', action: 'Lỗi tải lô ảnh khôi phục' };
+  }
+  if (p === '/api/vault/restore/commit') {
+    return { category: 'backup', action: 'Hoàn tất khôi phục sao lưu' };
+  }
+  if (p === '/api/vault/restore/abort') {
+    return { category: 'backup', action: 'Hủy phiên khôi phục sao lưu' };
+  }
+  if (p === '/api/vault/restore') {
+    return { category: 'backup', action: 'Khôi phục sao lưu JSON' };
+  }
+  if (p === '/api/vault/mark-seeded') {
+    return { category: 'backup', action: 'Nạp dữ liệu mẫu ban đầu' };
+  }
+  if (p === '/api/vault' && method === 'DELETE') {
+    return { category: 'backup', action: 'Xóa toàn bộ dữ liệu kho' };
+  }
+
+  if (p === '/api/system/github-status') {
+    return { category: 'github', action: 'Kiểm tra cập nhật từ GitHub' };
+  }
+  if (p === '/api/system/github-config') {
+    return { category: 'github', action: 'Lưu cấu hình repository GitHub' };
+  }
+  if (p === '/api/system/github-update') {
+    return { category: 'github', action: 'Cập nhật mã nguồn từ GitHub' };
+  }
+  if (p === '/api/system/restart') {
+    return { category: 'system', action: 'Khởi động lại tiến trình Server' };
+  }
+
+  return { category: 'http', action: `${method} ${p}` };
 }
 
 let cachedDevicesByHash = new Map<string, TrustedDeviceRecord>();
@@ -491,12 +738,84 @@ function toClientOrder(rec: ServerOrderRecord) {
 }
 
 function base64DataUrlToBuffer(dataUrl: string): { buffer: Buffer; mimeType: string } | null {
-  const match = /^data:([^;]+);base64,(.+)$/s.exec(dataUrl);
-  if (!match) return null;
-  return {
-    mimeType: match[1],
-    buffer: Buffer.from(match[2], 'base64'),
-  };
+  const match = /^data:([^;,]+)?(?:;[^,]*)?;base64,(.+)$/is.exec(dataUrl.trim());
+  if (match) {
+    return {
+      mimeType: (match[1] || 'image/jpeg').trim(),
+      buffer: Buffer.from(match[2].replace(/\s+/g, ''), 'base64'),
+    };
+  }
+  const plainMatch = /^data:([^;,]+)?(?:;[^,]*)?,(.*)$/is.exec(dataUrl.trim());
+  if (plainMatch) {
+    return {
+      mimeType: (plainMatch[1] || 'text/plain').trim(),
+      buffer: Buffer.from(decodeURIComponent(plainMatch[2]), 'utf8'),
+    };
+  }
+  return null;
+}
+
+async function writeStreamChunk(res: Response, chunk: string): Promise<void> {
+  if (res.writableEnded || res.destroyed) return;
+  const ok = res.write(chunk, 'utf8');
+  if (!ok) {
+    await new Promise<void>((resolve, reject) => {
+      const onDrain = () => {
+        cleanup();
+        resolve();
+      };
+      const onClose = () => {
+        cleanup();
+        reject(new Error('CLIENT_DISCONNECTED'));
+      };
+      const cleanup = () => {
+        res.off('drain', onDrain);
+        res.off('close', onClose);
+      };
+      res.once('drain', onDrain);
+      res.once('close', onClose);
+    });
+  }
+}
+
+async function moveFileOrCopy(srcPath: string, destPath: string): Promise<void> {
+  try {
+    await fsp.rename(srcPath, destPath);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EXDEV') {
+      await fsp.copyFile(srcPath, destPath);
+      await fsp.unlink(srcPath).catch(() => {});
+      return;
+    }
+    throw err;
+  }
+}
+
+interface RestoreSessionState {
+  id: string;
+  mode: 'merge' | 'replace';
+  stagingDir: string;
+  uploadsDir: string;
+  thumbsDir: string;
+  orderImagesDir: string;
+  categories: CategoryRecord[];
+  orders?: ServerOrderRecord[];
+  images: ServerImageRecord[];
+  orderCustomFiles: Map<string, { storedFile: string; mimeType: string }>;
+  createdAt: number;
+  updatedAt: number;
+}
+
+const restoreSessions = new Map<string, RestoreSessionState>();
+
+async function cleanupExpiredRestoreSessions(): Promise<void> {
+  const cutoff = Date.now() - 2 * 60 * 60 * 1000;
+  for (const [id, session] of restoreSessions.entries()) {
+    if (session.updatedAt < cutoff) {
+      restoreSessions.delete(id);
+      await fsp.rm(session.stagingDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
 }
 
 interface UpdateStateRecord {
@@ -899,6 +1218,7 @@ async function downloadAndApplyGithubTarball(
 async function startServer() {
   await ensureStorageReady();
   await readTrustedDevicesFile();
+  await loadActivityLogs();
 
   const app = express();
   let httpServer: http.Server | null = null;
@@ -909,6 +1229,53 @@ async function startServer() {
       fileSize: 100 * 1024 * 1024,
       fieldSize: 5 * 1024 * 1024,
     },
+  });
+
+  // Record API activity logs
+  app.use('/api', (req, res, next) => {
+    const startMs = Date.now();
+    const fullPath = req.originalUrl || req.url;
+    res.on('finish', () => {
+      const status = res.statusCode || 200;
+      const meta = describeApiActivity(req.method, fullPath, status);
+      if (meta.skip) return;
+
+      const reqWithDevice = req as Request & {
+        trustedDeviceName?: string;
+        activityDetail?: string;
+      };
+      let deviceName = reqWithDevice.trustedDeviceName;
+      if (!deviceName) {
+        const tok = extractDeviceToken(req);
+        if (tok) {
+          const matched = cachedDevicesByHash.get(hashDeviceToken(tok));
+          if (matched) {
+            deviceName = matched.deviceName || matched.label;
+          }
+        }
+      }
+
+      const level: ActivityLogLevel =
+        status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info';
+      const durationMs = Date.now() - startMs;
+      const cleanPath = fullPath.split('?')[0];
+
+      recordActivityLog({
+        level,
+        category: meta.category,
+        action: meta.action,
+        detail:
+          reqWithDevice.activityDetail ||
+          `${req.method} ${cleanPath} → ${status} (${durationMs}ms)`,
+        deviceName,
+        ip: getClientIp(req),
+        method: req.method,
+        path: cleanPath,
+        status,
+        durationMs,
+      });
+    });
+    next();
   });
 
   app.get('/api/health', (_req, res) => {
@@ -1135,7 +1502,9 @@ async function startServer() {
       return;
     }
 
-    (req as Request & { trustedDeviceId?: string }).trustedDeviceId = matched.id;
+    (req as Request & { trustedDeviceId?: string; trustedDeviceName?: string }).trustedDeviceId = matched.id;
+    (req as Request & { trustedDeviceId?: string; trustedDeviceName?: string }).trustedDeviceName =
+      matched.deviceName || matched.label;
     next();
   });
 
@@ -1439,6 +1808,75 @@ async function startServer() {
       next(err);
     } finally {
       isGithubUpdating = false;
+    }
+  });
+
+  // View server activity logs (Super-admin `tuananh` mode only)
+  app.get('/api/system/logs', (req, res) => {
+    if (req.header('x-super-admin') !== 'tuananh') {
+      res.status(403).json({
+        error: 'Chức năng xem log server chỉ khả dụng khi mở khóa bằng mật khẩu đặc biệt.',
+      });
+      return;
+    }
+
+    const levelFilter = String(req.query.level || 'all').toLowerCase();
+    const categoryFilter = String(req.query.category || 'all').toLowerCase();
+    const queryFilter = String(req.query.q || '').trim().toLowerCase();
+    const limitRaw = Number(req.query.limit);
+    const limit = Number.isFinite(limitRaw)
+      ? Math.min(MAX_ACTIVITY_LOGS, Math.max(10, Math.floor(limitRaw)))
+      : 200;
+
+    const filtered = activityLogs.filter((entry) => {
+      if (levelFilter !== 'all' && entry.level !== levelFilter) return false;
+      if (categoryFilter !== 'all' && entry.category !== categoryFilter) return false;
+      if (queryFilter) {
+        const hay = [
+          entry.action,
+          entry.detail || '',
+          entry.deviceName || '',
+          entry.path || '',
+          entry.ip || '',
+          entry.category,
+        ]
+          .join(' ')
+          .toLowerCase();
+        if (!hay.includes(queryFilter)) return false;
+      }
+      return true;
+    });
+
+    const mem = process.memoryUsage();
+    res.json({
+      logs: filtered.slice(0, limit),
+      totalBuffered: activityLogs.length,
+      serverStartedAt: SERVER_STARTED_AT,
+      uptimeSec: Math.floor(process.uptime()),
+      memoryMb: Math.round((mem.rss / (1024 * 1024)) * 10) / 10,
+    });
+  });
+
+  app.delete('/api/system/logs', async (req, res, next) => {
+    try {
+      if (req.header('x-super-admin') !== 'tuananh') {
+        res.status(403).json({
+          error: 'Chức năng xóa log server chỉ khả dụng khi mở khóa bằng mật khẩu đặc biệt.',
+        });
+        return;
+      }
+      await clearActivityLogs();
+      const reqWithDevice = req as Request & { trustedDeviceName?: string };
+      recordActivityLog({
+        level: 'info',
+        category: 'system',
+        action: 'Đã dọn sạch nhật ký hoạt động server',
+        deviceName: reqWithDevice.trustedDeviceName,
+        ip: getClientIp(req),
+      });
+      res.json({ ok: true });
+    } catch (err) {
+      next(err);
     }
   });
 
@@ -2170,6 +2608,118 @@ async function startServer() {
     }
   );
 
+  // Chunked multipart batch upload for atomic backup restore
+  app.post(
+    '/api/vault/restore/batch',
+    upload.any(),
+    async (req, res, next) => {
+      try {
+        const sessionId = sanitizeId(String(req.body?.sessionId || ''));
+        const session = sessionId ? restoreSessions.get(sessionId) : undefined;
+        if (!session) {
+          res.status(404).json({ error: 'Phiên khôi phục không tồn tại hoặc đã hết hạn.' });
+          return;
+        }
+        session.updatedAt = Date.now();
+
+        const uploadedList = Array.isArray(req.files)
+          ? (req.files as Express.Multer.File[])
+          : [];
+        const fileByField = new Map<string, Express.Multer.File>();
+        for (const f of uploadedList) {
+          fileByField.set(f.fieldname, f);
+        }
+
+        const rawMetaList =
+          typeof req.body?.metadata === 'string'
+            ? (JSON.parse(req.body.metadata) as Array<Record<string, unknown>>)
+            : [];
+        const rawOrderFileKeys =
+          typeof req.body?.orderFileKeys === 'string'
+            ? (JSON.parse(req.body.orderFileKeys) as Array<{ key: string; id: string; mimeType?: string; fileName?: string }>)
+            : [];
+
+        const writeTasks: Array<Promise<void>> = [];
+        const stagedRecords: ServerImageRecord[] = [];
+        const now = Date.now();
+
+        for (let idx = 0; idx < rawMetaList.length; idx++) {
+          const rawMeta = rawMetaList[idx] || {};
+          const mainFile = fileByField.get(`file_${idx}`);
+          if (!mainFile) continue;
+
+          const thumbFile = fileByField.get(`thumb_${idx}`);
+          const safeId = sanitizeId(String(rawMeta.id || '')) || crypto.randomUUID();
+          const mimeType = String(rawMeta.mimeType || mainFile.mimetype || 'image/jpeg');
+          const fileName = String(rawMeta.fileName || mainFile.originalname || `${safeId}.jpg`);
+          const ext = getFileExt(mimeType, fileName);
+          const storedFile = `${safeId}${ext}`;
+          const thumbMimeType = thumbFile?.mimetype || mimeType;
+          const thumbExt = getFileExt(thumbMimeType, thumbFile?.originalname);
+          const storedThumbFile = `${safeId}${thumbExt}`;
+
+          const stagedOrigPath = resolveSafeChild(session.uploadsDir, storedFile);
+          const stagedThumbPath = resolveSafeChild(session.thumbsDir, storedThumbFile);
+          if (!stagedOrigPath || !stagedThumbPath) continue;
+
+          writeTasks.push(fsp.writeFile(stagedOrigPath, mainFile.buffer));
+          writeTasks.push(fsp.writeFile(stagedThumbPath, thumbFile ? thumbFile.buffer : mainFile.buffer));
+
+          stagedRecords.push({
+            id: safeId,
+            title: String(rawMeta.title || 'Ảnh mẫu đã khôi phục'),
+            fileName,
+            notes: String(rawMeta.notes || ''),
+            categoryId: rawMeta.categoryId ? String(rawMeta.categoryId) : null,
+            tags: Array.isArray(rawMeta.tags) ? rawMeta.tags.map(String) : [],
+            width: Number(rawMeta.width) || 800,
+            height: Number(rawMeta.height) || 600,
+            size: Number(rawMeta.size) || mainFile.size,
+            mimeType,
+            aspectRatioType:
+              rawMeta.aspectRatioType === 'landscape' ||
+              rawMeta.aspectRatioType === 'portrait' ||
+              rawMeta.aspectRatioType === 'square'
+                ? rawMeta.aspectRatioType
+                : 'square',
+            dominantColors: Array.isArray(rawMeta.dominantColors)
+              ? rawMeta.dominantColors.map(String)
+              : [],
+            colorFamilies: Array.isArray(rawMeta.colorFamilies)
+              ? rawMeta.colorFamilies.map(String)
+              : [],
+            isFavorite: Boolean(rawMeta.isFavorite),
+            createdAt: Number(rawMeta.createdAt) || now + idx,
+            updatedAt: Number(rawMeta.updatedAt) || now + idx,
+            storedFile,
+            storedThumbFile,
+            thumbMimeType,
+          });
+        }
+
+        for (const item of rawOrderFileKeys) {
+          const orderFile = fileByField.get(`order_file_${item.key}`);
+          if (!orderFile) continue;
+          const fileId = sanitizeId(String(item.id || '')) || crypto.randomUUID();
+          const mimeType = String(item.mimeType || orderFile.mimetype || 'image/jpeg');
+          const ext = getFileExt(mimeType, item.fileName || orderFile.originalname);
+          const storedFile = `${fileId}${ext}`;
+          const stagedPath = resolveSafeChild(session.orderImagesDir, storedFile);
+          if (!stagedPath) continue;
+          writeTasks.push(fsp.writeFile(stagedPath, orderFile.buffer));
+          session.orderCustomFiles.set(item.key, { storedFile, mimeType });
+        }
+
+        await Promise.all(writeTasks);
+        session.images.push(...stagedRecords);
+
+        res.json({ accepted: stagedRecords.length });
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
   // JSON routes
   app.use('/api', express.json({ limit: '100mb' }));
 
@@ -2542,42 +3092,390 @@ async function startServer() {
     }
   });
 
-  // Export backup JSON bundle from server storage
-  app.get('/api/vault/backup', async (_req, res, next) => {
+  // Export backup JSON bundle from server storage (streamed to avoid RAM/buffer limits)
+  app.get('/api/vault/backup', async (req, res, next) => {
+    let clientClosed = false;
+    req.on('close', () => {
+      clientClosed = true;
+    });
+
     try {
       const vault = await readVaultFile();
-      const serializedImages = await Promise.all(
-        vault.images.map(async (img) => {
-          const origPath = resolveSafeChild(UPLOADS_DIR, img.storedFile);
-          if (!origPath || !fs.existsSync(origPath)) return null;
-          const buf = await fsp.readFile(origPath);
-          const mime = img.mimeType || 'image/jpeg';
-          const { storedFile: _sf, storedThumbFile: _stf, ...meta } = img;
-          return {
-            ...meta,
-            dataUrl: `data:${mime};base64,${buf.toString('base64')}`,
-          };
-        })
+      const categories = [...vault.categories];
+      const images = [...vault.images];
+      const orders = [...(vault.orders || [])];
+
+      const dateStr = new Date().toISOString().slice(0, 10);
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      if (req.query.download === '1') {
+        res.setHeader(
+          'Content-Disposition',
+          `attachment; filename="mai-huong-bakery-sao-luu-${dateStr}.json"`
+        );
+      }
+
+      await writeStreamChunk(
+        res,
+        `{"version":1,"exportedAt":${Date.now()},"categories":${JSON.stringify(categories)},"orders":[`
       );
 
+      let wroteFirstOrder = false;
+      for (const order of orders) {
+        if (clientClosed) return;
+        const serializedSamples = [];
+        for (const sample of order.sampleImages || []) {
+          if (sample.storedFile) {
+            const orderImgPath = resolveSafeChild(ORDER_IMAGES_DIR, sample.storedFile);
+            if (orderImgPath && fs.existsSync(orderImgPath)) {
+              const buf = await fsp.readFile(orderImgPath);
+              const mime = sample.mimeType || 'image/jpeg';
+              serializedSamples.push({
+                id: sample.id,
+                sourceImageId: null,
+                title: sample.title,
+                mimeType: mime,
+                dataUrl: `data:${mime};base64,${buf.toString('base64')}`,
+              });
+            }
+          } else {
+            serializedSamples.push({
+              id: sample.id,
+              sourceImageId: sample.sourceImageId || sample.id,
+              title: sample.title,
+            });
+          }
+        }
+        const serializedOrder = {
+          ...order,
+          sampleImages: serializedSamples,
+        };
+        const prefix = wroteFirstOrder ? ',' : '';
+        wroteFirstOrder = true;
+        await writeStreamChunk(res, `${prefix}${JSON.stringify(serializedOrder)}`);
+      }
+
+      await writeStreamChunk(res, '],"images":[');
+
+      let wroteFirstImage = false;
+      for (const img of images) {
+        if (clientClosed) return;
+        const origPath = resolveSafeChild(UPLOADS_DIR, img.storedFile);
+        if (!origPath || !fs.existsSync(origPath)) continue;
+        const buf = await fsp.readFile(origPath);
+        const mime = img.mimeType || 'image/jpeg';
+        const { storedFile: _sf, storedThumbFile: _stf, ...meta } = img;
+        const payload = JSON.stringify({
+          ...meta,
+          dataUrl: `data:${mime};base64,${buf.toString('base64')}`,
+        });
+        const prefix = wroteFirstImage ? ',' : '';
+        wroteFirstImage = true;
+        await writeStreamChunk(res, `${prefix}${payload}`);
+      }
+
+      await writeStreamChunk(res, ']}');
+      res.end();
+    } catch (err) {
+      if ((err as Error)?.message === 'CLIENT_DISCONNECTED' || clientClosed) {
+        return;
+      }
+      if (!res.headersSent) {
+        next(err);
+      } else {
+        res.destroy();
+      }
+    }
+  });
+
+  // Begin chunked atomic restore session
+  app.post('/api/vault/restore/begin', async (req, res, next) => {
+    try {
+      await cleanupExpiredRestoreSessions();
+      const body = (req.body || {}) as {
+        mode?: 'merge' | 'replace';
+        categories?: CategoryRecord[];
+        orders?: ServerOrderRecord[];
+      };
+      const mode: 'merge' | 'replace' = body.mode === 'replace' ? 'replace' : 'merge';
+      const sessionId = crypto.randomUUID();
+      const stagingDir = path.join(RESTORE_STAGING_DIR, sessionId);
+      const uploadsDir = path.join(stagingDir, 'uploads');
+      const thumbsDir = path.join(stagingDir, 'thumbs');
+      const orderImagesDir = path.join(stagingDir, 'order-images');
+
+      await Promise.all([
+        fsp.mkdir(uploadsDir, { recursive: true }),
+        fsp.mkdir(thumbsDir, { recursive: true }),
+        fsp.mkdir(orderImagesDir, { recursive: true }),
+      ]);
+
+      const now = Date.now();
+      restoreSessions.set(sessionId, {
+        id: sessionId,
+        mode,
+        stagingDir,
+        uploadsDir,
+        thumbsDir,
+        orderImagesDir,
+        categories: Array.isArray(body.categories) ? body.categories : [],
+        orders: Array.isArray(body.orders) ? body.orders : undefined,
+        images: [],
+        orderCustomFiles: new Map(),
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      res.status(201).json({ sessionId });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Commit staged restore atomically into vault.json & storage directories
+  app.post('/api/vault/restore/commit', async (req, res, next) => {
+    try {
+      const body = (req.body || {}) as {
+        sessionId?: string;
+        categories?: CategoryRecord[];
+        orders?: Array<
+          Omit<Partial<ServerOrderRecord>, 'sampleImages'> & {
+            sampleImages?: Array<{
+              id?: string;
+              sourceImageId?: string | null;
+              title?: string;
+              uploadKey?: string;
+            }>;
+          }
+        >;
+      };
+      const sessionId = sanitizeId(String(body.sessionId || ''));
+      const session = sessionId ? restoreSessions.get(sessionId) : undefined;
+      if (!session) {
+        res.status(404).json({ error: 'Phiên khôi phục không tồn tại hoặc đã hết hạn.' });
+        return;
+      }
+
+      const incomingCats = Array.isArray(body.categories)
+        ? body.categories
+        : session.categories;
+      const incomingOrders = Array.isArray(body.orders)
+        ? body.orders
+        : session.orders;
+
+      // Move all staged binary files into live storage directories
+      for (const img of session.images) {
+        const srcOrig = resolveSafeChild(session.uploadsDir, img.storedFile);
+        const destOrig = resolveSafeChild(UPLOADS_DIR, img.storedFile);
+        if (srcOrig && destOrig && fs.existsSync(srcOrig)) {
+          await moveFileOrCopy(srcOrig, destOrig);
+        }
+
+        const srcThumb = resolveSafeChild(session.thumbsDir, img.storedThumbFile);
+        const destThumb = resolveSafeChild(THUMBS_DIR, img.storedThumbFile);
+        if (srcThumb && destThumb && fs.existsSync(srcThumb)) {
+          await moveFileOrCopy(srcThumb, destThumb);
+        }
+      }
+
+      for (const custom of session.orderCustomFiles.values()) {
+        const srcOrderImg = resolveSafeChild(session.orderImagesDir, custom.storedFile);
+        const destOrderImg = resolveSafeChild(ORDER_IMAGES_DIR, custom.storedFile);
+        if (srcOrderImg && destOrderImg && fs.existsSync(srcOrderImg)) {
+          await moveFileOrCopy(srcOrderImg, destOrderImg);
+        }
+      }
+
+      const now = Date.now();
+      const restoredOrders: ServerOrderRecord[] | undefined = incomingOrders
+        ? incomingOrders
+            .filter((o) => o && o.id && o.customerName)
+            .map((o) => {
+              const price = Math.max(0, Number(o.price) || 0);
+              const depositAmount = Math.max(0, Number(o.depositAmount) || 0);
+              return {
+                id: String(o.id),
+                orderCode: String(o.orderCode || `DH-${String(o.id).slice(0, 6)}`),
+                customerName: String(o.customerName || ''),
+                customerPhone: String(o.customerPhone || ''),
+                productName: String(o.productName || ''),
+                productDescription: String(o.productDescription || ''),
+                pickupTime: String(o.pickupTime || ''),
+                price,
+                depositAmount,
+                isPaid: Boolean(o.isPaid) || (price > 0 && depositAmount >= price),
+                isReady: Boolean(o.isReady),
+                isReceived: Boolean(o.isReceived),
+                sampleImages: (o.sampleImages || []).map((s) => {
+                  const uploadKey = 'uploadKey' in s ? s.uploadKey : undefined;
+                  const stagedCustom = uploadKey
+                    ? session.orderCustomFiles.get(String(uploadKey))
+                    : undefined;
+                  if (stagedCustom) {
+                    return {
+                      id: String(s.id || crypto.randomUUID()),
+                      sourceImageId: null,
+                      title: String(s.title || 'Ảnh mẫu đơn hàng'),
+                      storedFile: stagedCustom.storedFile,
+                      mimeType: stagedCustom.mimeType,
+                    };
+                  }
+                  return {
+                    id: String(s.id || crypto.randomUUID()),
+                    sourceImageId: s.sourceImageId ? String(s.sourceImageId) : null,
+                    title: String(s.title || 'Ảnh mẫu'),
+                  };
+                }),
+                createdAt: Number(o.createdAt) || now,
+                updatedAt: Number(o.updatedAt) || now,
+              };
+            })
+        : undefined;
+
+      const cleanupResult = await withVaultLock(async (vault) => {
+        const baseCats = session.mode === 'replace' ? [] : vault.categories;
+        const catMap = new Map<string, CategoryRecord>(baseCats.map((c) => [c.id, c]));
+        for (const cat of incomingCats) {
+          if (cat && cat.id && cat.name) {
+            catMap.set(String(cat.id), {
+              id: String(cat.id),
+              name: String(cat.name),
+              description: String(cat.description || ''),
+              color: String(cat.color || '#2563EB'),
+              order: Number.isFinite(cat.order) ? Number(cat.order) : catMap.size,
+              createdAt: Number(cat.createdAt) || now,
+            });
+          }
+        }
+
+        const baseImgs = session.mode === 'replace' ? [] : vault.images;
+        const imgMap = new Map<string, ServerImageRecord>(baseImgs.map((i) => [i.id, i]));
+        for (const img of session.images) {
+          imgMap.set(img.id, img);
+        }
+        const nextImages = Array.from(imgMap.values());
+        const keptStoredFiles = new Set(nextImages.map((i) => i.storedFile));
+        const keptThumbFiles = new Set(nextImages.map((i) => i.storedThumbFile));
+
+        const oldOrphanImages = vault.images.filter(
+          (oldImg) =>
+            !keptStoredFiles.has(oldImg.storedFile) ||
+            !keptThumbFiles.has(oldImg.storedThumbFile)
+        );
+
+        let nextOrders = vault.orders || [];
+        if (restoredOrders !== undefined) {
+          if (session.mode === 'replace') {
+            nextOrders = restoredOrders;
+          } else {
+            const orderMap = new Map<string, ServerOrderRecord>(
+              nextOrders.map((o) => [o.id, o])
+            );
+            for (const o of restoredOrders) {
+              orderMap.set(o.id, o);
+            }
+            nextOrders = Array.from(orderMap.values());
+          }
+        }
+
+        const keptOrderFiles = new Set(
+          nextOrders.flatMap((o) =>
+            (o.sampleImages || []).map((s) => s.storedFile).filter(Boolean) as string[]
+          )
+        );
+        const oldOrphanOrderFiles = (vault.orders || [])
+          .flatMap((o) =>
+            (o.sampleImages || []).map((s) => s.storedFile).filter(Boolean) as string[]
+          )
+          .filter((fileName) => !keptOrderFiles.has(fileName));
+
+        return {
+          nextVault: {
+            version: 1,
+            seeded: true,
+            categories: Array.from(catMap.values()),
+            images: nextImages,
+            orders: nextOrders,
+          },
+          result: {
+            oldOrphanImages,
+            oldOrphanOrderFiles,
+            keptStoredFiles,
+            keptThumbFiles,
+            importedCategories: incomingCats.length,
+            importedImages: session.images.length,
+            importedOrders: restoredOrders ? restoredOrders.length : 0,
+          },
+        };
+      });
+
+      // Clean up replaced files only after vault.json commit succeeded
+      await Promise.all([
+        ...cleanupResult.oldOrphanImages.flatMap((img) => {
+          const ops: Array<Promise<void>> = [];
+          if (!cleanupResult.keptStoredFiles.has(img.storedFile)) {
+            const orig = resolveSafeChild(UPLOADS_DIR, img.storedFile);
+            if (orig) ops.push(fsp.unlink(orig).catch(() => {}));
+          }
+          if (!cleanupResult.keptThumbFiles.has(img.storedThumbFile)) {
+            const thumb = resolveSafeChild(THUMBS_DIR, img.storedThumbFile);
+            if (thumb) ops.push(fsp.unlink(thumb).catch(() => {}));
+          }
+          return ops;
+        }),
+        ...cleanupResult.oldOrphanOrderFiles.map((fileName) => {
+          const p = resolveSafeChild(ORDER_IMAGES_DIR, fileName);
+          return p ? fsp.unlink(p).catch(() => {}) : Promise.resolve();
+        }),
+      ]);
+
+      restoreSessions.delete(sessionId);
+      await fsp.rm(session.stagingDir, { recursive: true, force: true }).catch(() => {});
+
+      broadcastVaultUpdated();
       res.json({
-        version: 1,
-        exportedAt: Date.now(),
-        categories: vault.categories,
-        images: serializedImages.filter(Boolean),
+        importedCategories: cleanupResult.importedCategories,
+        importedImages: cleanupResult.importedImages,
+        importedOrders: cleanupResult.importedOrders,
       });
     } catch (err) {
       next(err);
     }
   });
 
-  // Restore backup JSON bundle onto server storage
+  // Abort staged restore and clean up temporary staging directory
+  app.post('/api/vault/restore/abort', async (req, res, next) => {
+    try {
+      const sessionId = sanitizeId(String(req.body?.sessionId || ''));
+      const session = sessionId ? restoreSessions.get(sessionId) : undefined;
+      if (session) {
+        restoreSessions.delete(sessionId);
+        await fsp.rm(session.stagingDir, { recursive: true, force: true }).catch(() => {});
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Legacy single-request restore endpoint (kept for small payloads & compatibility)
   app.post('/api/vault/restore', async (req, res, next) => {
     try {
       const { mode, bundle } = req.body as {
         mode?: 'merge' | 'replace';
         bundle?: {
           categories?: CategoryRecord[];
+          orders?: Array<
+            Partial<ServerOrderRecord> & {
+              sampleImages?: Array<{
+                id?: string;
+                sourceImageId?: string | null;
+                title?: string;
+                mimeType?: string;
+                dataUrl?: string;
+              }>;
+            }
+          >;
           images?: Array<
             Partial<ServerImageRecord> & {
               dataUrl?: string;
@@ -2591,20 +3489,6 @@ async function startServer() {
         return;
       }
 
-      if (mode === 'replace') {
-        const oldVault = await readVaultFile();
-        await Promise.all(
-          oldVault.images.flatMap((img) => {
-            const ops: Array<Promise<void>> = [];
-            const orig = resolveSafeChild(UPLOADS_DIR, img.storedFile);
-            const thumb = resolveSafeChild(THUMBS_DIR, img.storedThumbFile);
-            if (orig) ops.push(fsp.unlink(orig).catch(() => {}));
-            if (thumb) ops.push(fsp.unlink(thumb).catch(() => {}));
-            return ops;
-          })
-        );
-      }
-
       const writtenImages: ServerImageRecord[] = [];
       for (const item of bundle.images) {
         if (!item.dataUrl) continue;
@@ -2614,7 +3498,7 @@ async function startServer() {
         const mimeType = item.mimeType || parsed.mimeType || 'image/jpeg';
         const ext = getFileExt(mimeType, item.fileName);
         const storedFile = `${safeId}${ext}`;
-        const storedThumbFile = `${safeId}.jpg`;
+        const storedThumbFile = `${safeId}${ext}`;
         const origPath = resolveSafeChild(UPLOADS_DIR, storedFile);
         const thumbPath = resolveSafeChild(THUMBS_DIR, storedThumbFile);
         if (!origPath || !thumbPath) continue;
@@ -2647,12 +3531,72 @@ async function startServer() {
           updatedAt: now,
           storedFile,
           storedThumbFile,
+          thumbMimeType: mimeType,
         });
       }
 
       const incomingCats = Array.isArray(bundle.categories) ? bundle.categories : [];
+      const incomingOrders = Array.isArray(bundle.orders) ? bundle.orders : undefined;
 
-      await withVaultLock(async (vault) => {
+      const writtenOrders: ServerOrderRecord[] | undefined = incomingOrders
+        ? await Promise.all(
+            incomingOrders
+              .filter((o) => o && o.id && o.customerName)
+              .map(async (o) => {
+                const now = Date.now();
+                const price = Math.max(0, Number(o.price) || 0);
+                const depositAmount = Math.max(0, Number(o.depositAmount) || 0);
+                const sampleImages: ServerOrderSampleImage[] = [];
+                for (const s of o.sampleImages || []) {
+                  if (s.dataUrl) {
+                    const parsed = base64DataUrlToBuffer(s.dataUrl);
+                    if (parsed) {
+                      const fileId = sanitizeId(String(s.id || '')) || crypto.randomUUID();
+                      const mimeType = s.mimeType || parsed.mimeType || 'image/jpeg';
+                      const ext = getFileExt(mimeType);
+                      const storedFile = `${fileId}${ext}`;
+                      const destPath = resolveSafeChild(ORDER_IMAGES_DIR, storedFile);
+                      if (destPath) {
+                        await fsp.writeFile(destPath, parsed.buffer);
+                        sampleImages.push({
+                          id: fileId,
+                          sourceImageId: null,
+                          title: String(s.title || 'Ảnh mẫu đơn hàng'),
+                          storedFile,
+                          mimeType,
+                        });
+                      }
+                    }
+                  } else {
+                    sampleImages.push({
+                      id: String(s.id || crypto.randomUUID()),
+                      sourceImageId: s.sourceImageId ? String(s.sourceImageId) : null,
+                      title: String(s.title || 'Ảnh mẫu'),
+                    });
+                  }
+                }
+                return {
+                  id: String(o.id),
+                  orderCode: String(o.orderCode || `DH-${String(o.id).slice(0, 6)}`),
+                  customerName: String(o.customerName || ''),
+                  customerPhone: String(o.customerPhone || ''),
+                  productName: String(o.productName || ''),
+                  productDescription: String(o.productDescription || ''),
+                  pickupTime: String(o.pickupTime || ''),
+                  price,
+                  depositAmount,
+                  isPaid: Boolean(o.isPaid) || (price > 0 && depositAmount >= price),
+                  isReady: Boolean(o.isReady),
+                  isReceived: Boolean(o.isReceived),
+                  sampleImages,
+                  createdAt: Number(o.createdAt) || now,
+                  updatedAt: Number(o.updatedAt) || now,
+                };
+              })
+          )
+        : undefined;
+
+      const oldOrphans = await withVaultLock(async (vault) => {
         const baseCats = mode === 'replace' ? [] : vault.categories;
         const catMap = new Map<string, CategoryRecord>(baseCats.map((c) => [c.id, c]));
         for (const cat of incomingCats) {
@@ -2673,17 +3617,52 @@ async function startServer() {
         for (const img of writtenImages) {
           imgMap.set(img.id, img);
         }
+        const nextImages = Array.from(imgMap.values());
+        const keptStoredFiles = new Set(nextImages.map((i) => i.storedFile));
+        const keptThumbFiles = new Set(nextImages.map((i) => i.storedThumbFile));
+        const removedImages = vault.images.filter(
+          (i) => !keptStoredFiles.has(i.storedFile) || !keptThumbFiles.has(i.storedThumbFile)
+        );
+
+        let nextOrders = vault.orders || [];
+        if (writtenOrders !== undefined) {
+          if (mode === 'replace') {
+            nextOrders = writtenOrders;
+          } else {
+            const orderMap = new Map<string, ServerOrderRecord>(nextOrders.map((o) => [o.id, o]));
+            for (const o of writtenOrders) {
+              orderMap.set(o.id, o);
+            }
+            nextOrders = Array.from(orderMap.values());
+          }
+        }
 
         return {
           nextVault: {
             version: 1,
             seeded: true,
             categories: Array.from(catMap.values()),
-            images: Array.from(imgMap.values()),
+            images: nextImages,
+            orders: nextOrders,
           },
-          result: true,
+          result: { removedImages, keptStoredFiles, keptThumbFiles },
         };
       });
+
+      await Promise.all(
+        oldOrphans.removedImages.flatMap((img) => {
+          const ops: Array<Promise<void>> = [];
+          if (!oldOrphans.keptStoredFiles.has(img.storedFile)) {
+            const orig = resolveSafeChild(UPLOADS_DIR, img.storedFile);
+            if (orig) ops.push(fsp.unlink(orig).catch(() => {}));
+          }
+          if (!oldOrphans.keptThumbFiles.has(img.storedThumbFile)) {
+            const thumb = resolveSafeChild(THUMBS_DIR, img.storedThumbFile);
+            if (thumb) ops.push(fsp.unlink(thumb).catch(() => {}));
+          }
+          return ops;
+        })
+      );
 
       broadcastVaultUpdated();
       res.json({
@@ -2736,13 +3715,26 @@ async function startServer() {
   });
 
   // API error handler
-  app.use('/api', (err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  app.use('/api', (err: unknown, req: Request, res: Response, _next: NextFunction) => {
+    const reqWithDevice = req as Request & { trustedDeviceName?: string };
+    const message = err instanceof Error ? err.message : 'Server error';
+    recordActivityLog({
+      level: 'error',
+      category: 'system',
+      action: 'Lỗi xử lý API trên server',
+      detail: `${req.method} ${(req.originalUrl || req.url).split('?')[0]} — ${message}`,
+      deviceName: reqWithDevice.trustedDeviceName,
+      ip: getClientIp(req),
+      method: req.method,
+      path: (req.originalUrl || req.url).split('?')[0],
+      status: err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE' ? 413 : 500,
+    });
+
     if (err instanceof multer.MulterError) {
       const status = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
       res.status(status).json({ error: err.message });
       return;
     }
-    const message = err instanceof Error ? err.message : 'Server error';
     res.status(500).json({ error: message });
   });
 
@@ -2774,6 +3766,14 @@ async function startServer() {
 
   httpServer = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server listening on http://localhost:${PORT}`);
+    void readVaultFile().then((vault) => {
+      recordActivityLog({
+        level: 'info',
+        category: 'system',
+        action: 'Server đã khởi động',
+        detail: `Cổng ${PORT} · ${vault.images.length} ảnh · ${vault.categories.length} danh mục · ${(vault.orders || []).length} đơn hàng`,
+      });
+    });
     const nets = os.networkInterfaces();
     for (const ifaceList of Object.values(nets)) {
       if (!ifaceList) continue;

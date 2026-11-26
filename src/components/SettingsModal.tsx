@@ -2,6 +2,7 @@ import {
   AlertCircle,
   Check,
   CheckCircle2,
+  Download,
   Eye,
   EyeOff,
   GitBranch,
@@ -12,6 +13,8 @@ import {
   Power,
   RefreshCw,
   RotateCw,
+  ScrollText,
+  Search,
   Settings,
   ShieldCheck,
   Smartphone,
@@ -21,6 +24,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import {
+  attachDeviceTokenToUrl,
   fetchTrustedDevices,
   logoutCurrentDevice,
   renameTrustedDevice,
@@ -28,13 +32,20 @@ import {
   type TrustedDeviceInfo,
 } from '../lib/deviceAuth';
 import {
+  clearServerActivityLogs,
   fetchGithubUpdateStatus,
+  fetchServerActivityLogs,
   restartServer,
   saveGithubConfig,
   triggerGithubUpdate,
   waitForServerHealthy,
+  type ActivityLogCategory,
+  type ActivityLogLevel,
+  type BackupImportProgress,
+  type BackupImportResult,
   type GithubUpdateResult,
   type GithubUpdateStatusResponse,
+  type ServerActivityLogEntry,
 } from '../lib/serverVault';
 import type { StorageStats } from '../types/vault';
 import { BackupView } from './BackupView';
@@ -52,11 +63,9 @@ interface SettingsModalProps {
   onExportBackup: () => Promise<void>;
   onImportBackup: (
     file: File,
-    mode: 'merge' | 'replace'
-  ) => Promise<{
-    importedCategories: number;
-    importedImages: number;
-  }>;
+    mode: 'merge' | 'replace',
+    onProgress?: (progress: BackupImportProgress) => void
+  ) => Promise<BackupImportResult>;
   onRestoreSampleVault: () => Promise<void>;
   onClearAllData: () => Promise<void>;
   pendingLocalSync?: { categories: number; images: number };
@@ -112,6 +121,49 @@ export function SettingsModal({
     type: 'success' | 'warning' | 'error';
     message: string;
   } | null>(null);
+
+  const isSuperAdmin = isAdmin && adminExpiresAt === Infinity;
+  const [isLogsModalOpen, setIsLogsModalOpen] = useState(false);
+  const [serverLogs, setServerLogs] = useState<ServerActivityLogEntry[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsError, setLogsError] = useState<string | null>(null);
+  const [logsMeta, setLogsMeta] = useState<{
+    totalBuffered: number;
+    uptimeSec: number;
+    memoryMb: number;
+  } | null>(null);
+  const [logLevelFilter, setLogLevelFilter] = useState<'all' | ActivityLogLevel>('all');
+  const [logCategoryFilter, setLogCategoryFilter] = useState<'all' | ActivityLogCategory>('all');
+  const [logSearchQuery, setLogSearchQuery] = useState('');
+  const [autoRefreshLogs, setAutoRefreshLogs] = useState(true);
+  const [confirmClearLogs, setConfirmClearLogs] = useState(false);
+  const [isClearingLogs, setIsClearingLogs] = useState(false);
+
+  const loadServerLogs = useCallback(async () => {
+    if (!isSuperAdmin) return;
+    setLogsLoading(true);
+    setLogsError(null);
+    try {
+      const res = await fetchServerActivityLogs({
+        level: logLevelFilter,
+        category: logCategoryFilter,
+        q: logSearchQuery,
+        limit: 300,
+      });
+      setServerLogs(res.logs);
+      setLogsMeta({
+        totalBuffered: res.totalBuffered,
+        uptimeSec: res.uptimeSec,
+        memoryMb: res.memoryMb,
+      });
+    } catch (err) {
+      setLogsError(
+        err instanceof Error ? err.message : 'Không thể tải log hoạt động server.'
+      );
+    } finally {
+      setLogsLoading(false);
+    }
+  }, [isSuperAdmin, logLevelFilter, logCategoryFilter, logSearchQuery]);
 
   const loadDevices = useCallback(async () => {
     setDevicesLoading(true);
@@ -263,6 +315,8 @@ export function SettingsModal({
     setRestartNotice(null);
     setIsDevicesModalOpen(false);
     setEditingDeviceId(null);
+    setIsLogsModalOpen(false);
+    setConfirmClearLogs(false);
     if (isAdmin) {
       void loadDevices();
       void loadGithubStatus();
@@ -270,10 +324,67 @@ export function SettingsModal({
   }, [isOpen, isAdmin, loadDevices, loadGithubStatus]);
 
   useEffect(() => {
+    if (!isOpen || !isLogsModalOpen || !isSuperAdmin) return;
+    void loadServerLogs();
+  }, [isOpen, isLogsModalOpen, isSuperAdmin, loadServerLogs]);
+
+  useEffect(() => {
+    if (!isOpen || !isLogsModalOpen || !isSuperAdmin || !autoRefreshLogs) return;
+    const es = new EventSource(attachDeviceTokenToUrl('/api/events'));
+    es.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data) as {
+          type?: string;
+          entry?: ServerActivityLogEntry;
+        };
+        if (msg.type === 'activity-log' && msg.entry) {
+          const entry = msg.entry;
+          setLogsMeta((prev) =>
+            prev ? { ...prev, totalBuffered: prev.totalBuffered + 1 } : prev
+          );
+          if (logLevelFilter !== 'all' && entry.level !== logLevelFilter) return;
+          if (logCategoryFilter !== 'all' && entry.category !== logCategoryFilter) return;
+          const q = logSearchQuery.trim().toLowerCase();
+          if (q) {
+            const hay = [
+              entry.action,
+              entry.detail || '',
+              entry.deviceName || '',
+              entry.path || '',
+              entry.ip || '',
+              entry.category,
+            ]
+              .join(' ')
+              .toLowerCase();
+            if (!hay.includes(q)) return;
+          }
+          setServerLogs((prev) => [entry, ...prev.filter((l) => l.id !== entry.id)].slice(0, 300));
+        }
+      } catch {
+        // Ignore malformed SSE payload
+      }
+    };
+    return () => {
+      es.close();
+    };
+  }, [
+    isOpen,
+    isLogsModalOpen,
+    isSuperAdmin,
+    autoRefreshLogs,
+    logLevelFilter,
+    logCategoryFilter,
+    logSearchQuery,
+  ]);
+
+  useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (isDevicesModalOpen) {
+        if (isLogsModalOpen) {
+          setIsLogsModalOpen(false);
+          setConfirmClearLogs(false);
+        } else if (isDevicesModalOpen) {
           setIsDevicesModalOpen(false);
           setEditingDeviceId(null);
         } else {
@@ -283,7 +394,7 @@ export function SettingsModal({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, isDevicesModalOpen, onClose]);
+  }, [isOpen, isDevicesModalOpen, isLogsModalOpen, onClose]);
 
   useEffect(() => {
     if (!isOpen || !isAdmin || !adminExpiresAt || !Number.isFinite(adminExpiresAt)) return;
@@ -945,6 +1056,40 @@ export function SettingsModal({
             </section>
           )}
 
+          {/* Server Activity Logs Section (Super-Admin `tuananh` mode only) */}
+          {isSuperAdmin && (
+            <section className="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="font-display text-base font-semibold text-zinc-950 dark:text-zinc-50">
+                      Log hoạt động Server
+                    </h2>
+                    <span className="inline-flex items-center gap-1 rounded-full bg-violet-500/15 px-2.5 py-0.5 text-xs font-medium text-violet-300">
+                      <ScrollText className="h-3.5 w-3.5" />
+                      <span>Chế độ tuananh</span>
+                    </span>
+                  </div>
+                  <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                    Theo dõi nhật ký hoạt động thời gian thực của server: xác thực thiết bị, tải/xóa ảnh, đơn hàng, sao lưu JSON, cập nhật GitHub và lỗi hệ thống.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmClearLogs(false);
+                    setIsLogsModalOpen(true);
+                  }}
+                  className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-violet-600 px-3.5 text-xs font-semibold text-white transition-colors hover:bg-violet-500"
+                >
+                  <ScrollText className="h-3.5 w-3.5" />
+                  <span>Xem log server</span>
+                </button>
+              </div>
+            </section>
+          )}
+
           {/* Backup & Storage Section (Admin only) */}
           <div className="border-t border-zinc-200 pt-6 dark:border-zinc-800">
             {isAdmin ? (
@@ -1169,6 +1314,274 @@ export function SettingsModal({
                             <Trash2 className="h-3.5 w-3.5" />
                             <span>Thu hồi</span>
                           </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Server Activity Logs Modal (`tuananh` mode only) */}
+      {isSuperAdmin && isLogsModalOpen && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-950/75 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[calc(0.75rem+var(--app-safe-top))] sm:px-4 sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pt-[calc(1rem+var(--app-safe-top))]"
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsLogsModalOpen(false);
+            setConfirmClearLogs(false);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="server-logs-modal-title"
+            onClick={(e) => e.stopPropagation()}
+            className="flex max-h-full w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950 shadow-2xl sm:max-h-[min(88vh,calc(100dvh-2rem-var(--app-safe-top)))]"
+          >
+            {/* Header */}
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-zinc-800 px-5 py-4">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <ScrollText className="h-4 w-4 text-violet-400" />
+                  <h2
+                    id="server-logs-modal-title"
+                    className="font-display text-base font-bold text-zinc-50"
+                  >
+                    Nhật ký hoạt động Server
+                  </h2>
+                  {logsMeta && (
+                    <span className="rounded-md bg-zinc-800 px-2 py-0.5 font-mono text-[11px] text-zinc-300 tabular-nums">
+                      {logsMeta.totalBuffered} dòng · RAM {logsMeta.memoryMb} MB · Uptime{' '}
+                      {logsMeta.uptimeSec >= 3600
+                        ? `${Math.floor(logsMeta.uptimeSec / 3600)}h${Math.floor((logsMeta.uptimeSec % 3600) / 60)}m`
+                        : logsMeta.uptimeSec >= 60
+                          ? `${Math.floor(logsMeta.uptimeSec / 60)}m${logsMeta.uptimeSec % 60}s`
+                          : `${logsMeta.uptimeSec}s`}
+                    </span>
+                  )}
+                </div>
+                <p className="mt-0.5 text-xs text-zinc-400">
+                  Hiển thị tối đa 300 hoạt động gần nhất theo bộ lọc hiện tại.
+                </p>
+              </div>
+
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAutoRefreshLogs((v) => !v)}
+                  className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors ${
+                    autoRefreshLogs
+                      ? 'border-emerald-800/80 bg-emerald-950/50 text-emerald-300'
+                      : 'border-zinc-700 bg-zinc-900 text-zinc-400 hover:bg-zinc-800'
+                  }`}
+                >
+                  <span
+                    className={`h-2 w-2 rounded-full ${
+                      autoRefreshLogs ? 'animate-pulse bg-emerald-400' : 'bg-zinc-500'
+                    }`}
+                  />
+                  <span>Trực tiếp</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={logsLoading}
+                  onClick={() => void loadServerLogs()}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800 disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${logsLoading ? 'animate-spin' : ''}`} />
+                  <span>Làm mới</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={serverLogs.length === 0}
+                  onClick={() => {
+                    const blob = new Blob([JSON.stringify(serverLogs, null, 2)], {
+                      type: 'application/json',
+                    });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `server-logs-${new Date().toISOString().slice(0, 10)}.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+                  }}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800 disabled:opacity-50"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  <span>Tải log</span>
+                </button>
+
+                {confirmClearLogs ? (
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setConfirmClearLogs(false)}
+                      className="h-8 rounded-lg border border-zinc-700 px-2 text-xs text-zinc-300 hover:bg-zinc-800"
+                    >
+                      Hủy
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isClearingLogs}
+                      onClick={async () => {
+                        setIsClearingLogs(true);
+                        try {
+                          await clearServerActivityLogs();
+                          setConfirmClearLogs(false);
+                          await loadServerLogs();
+                        } finally {
+                          setIsClearingLogs(false);
+                        }
+                      }}
+                      className="h-8 rounded-lg bg-rose-600 px-2.5 text-xs font-medium text-white hover:bg-rose-500 disabled:opacity-50"
+                    >
+                      Xóa hết
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmClearLogs(true)}
+                    className="inline-flex h-8 items-center gap-1 rounded-lg border border-rose-900/70 px-2.5 text-xs font-medium text-rose-300 transition-colors hover:bg-rose-950/50"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>Xóa log</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsLogsModalOpen(false);
+                    setConfirmClearLogs(false);
+                  }}
+                  aria-label="Đóng log server"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Filters Bar */}
+            <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-800 bg-zinc-900/40 px-5 py-3">
+              <div className="relative min-w-[180px] flex-1">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500" />
+                <input
+                  type="text"
+                  value={logSearchQuery}
+                  onChange={(e) => setLogSearchQuery(e.target.value)}
+                  placeholder="Tìm theo hành động, thiết bị, API, IP..."
+                  className="h-8 w-full rounded-lg border border-zinc-700 bg-zinc-950 pl-8 pr-3 text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-violet-500 focus:outline-none"
+                />
+              </div>
+
+              <select
+                value={logLevelFilter}
+                onChange={(e) => setLogLevelFilter(e.target.value as 'all' | ActivityLogLevel)}
+                aria-label="Lọc mức độ log"
+                className="h-8 rounded-lg border border-zinc-700 bg-zinc-950 px-2.5 text-xs text-zinc-200 focus:border-violet-500 focus:outline-none"
+              >
+                <option value="all">Tất cả mức độ</option>
+                <option value="info">Thông tin (Info)</option>
+                <option value="warn">Cảnh báo (Warn)</option>
+                <option value="error">Lỗi (Error)</option>
+              </select>
+
+              <select
+                value={logCategoryFilter}
+                onChange={(e) =>
+                  setLogCategoryFilter(e.target.value as 'all' | ActivityLogCategory)
+                }
+                aria-label="Lọc nhóm hoạt động"
+                className="h-8 rounded-lg border border-zinc-700 bg-zinc-950 px-2.5 text-xs text-zinc-200 focus:border-violet-500 focus:outline-none"
+              >
+                <option value="all">Tất cả nhóm</option>
+                <option value="system">Hệ thống</option>
+                <option value="device">Thiết bị</option>
+                <option value="image">Ảnh mẫu</option>
+                <option value="category">Danh mục</option>
+                <option value="order">Đơn hàng</option>
+                <option value="backup">Sao lưu / Khôi phục</option>
+                <option value="github">GitHub</option>
+                <option value="http">HTTP khác</option>
+              </select>
+            </div>
+
+            {/* Log Entries */}
+            <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto p-4">
+              {logsError && (
+                <div className="mb-3 flex items-start gap-2 rounded-lg border border-rose-900/70 bg-rose-950/40 px-3.5 py-2.5 text-xs text-rose-200">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-400" />
+                  <span>{logsError}</span>
+                </div>
+              )}
+
+              {serverLogs.length === 0 ? (
+                <p className="py-10 text-center text-sm text-zinc-400">
+                  {logsLoading ? 'Đang tải nhật ký hoạt động...' : 'Chưa có bản ghi log nào khớp bộ lọc.'}
+                </p>
+              ) : (
+                serverLogs.map((entry) => {
+                  const timeText = new Intl.DateTimeFormat('vi-VN', {
+                    day: '2-digit',
+                    month: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                  }).format(new Date(entry.ts));
+
+                  const levelStyle =
+                    entry.level === 'error'
+                      ? 'border-rose-900/70 bg-rose-950/25'
+                      : entry.level === 'warn'
+                        ? 'border-amber-900/60 bg-amber-950/20'
+                        : 'border-zinc-800 bg-zinc-900/40';
+
+                  const levelBadge =
+                    entry.level === 'error'
+                      ? 'bg-rose-500/20 text-rose-300'
+                      : entry.level === 'warn'
+                        ? 'bg-amber-500/20 text-amber-300'
+                        : 'bg-emerald-500/15 text-emerald-300';
+
+                  return (
+                    <div
+                      key={entry.id}
+                      className={`rounded-xl border px-3.5 py-2.5 text-xs ${levelStyle}`}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                          <span
+                            className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase ${levelBadge}`}
+                          >
+                            {entry.level}
+                          </span>
+                          <span className="rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-300">
+                            {entry.category}
+                          </span>
+                          <span className="font-medium text-zinc-100">{entry.action}</span>
+                        </div>
+                        <span className="shrink-0 font-mono text-[11px] text-zinc-400 tabular-nums">
+                          {timeText}
+                        </span>
+                      </div>
+
+                      {(entry.detail || entry.deviceName || entry.ip) && (
+                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[11px] text-zinc-400">
+                          {entry.detail && <span className="break-all">{entry.detail}</span>}
+                          {entry.deviceName && (
+                            <span className="text-blue-300">Thiết bị: {entry.deviceName}</span>
+                          )}
+                          {entry.ip && <span className="text-zinc-500">IP: {entry.ip}</span>}
                         </div>
                       )}
                     </div>

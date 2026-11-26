@@ -1,11 +1,17 @@
 import type { Category, OrderRecord, VaultImageRecord, VaultImageView } from '../types/vault';
+import {
+  dataUrlToBlob,
+  parseBackupFileStreaming,
+  type BackupImageInput,
+  type BackupOrderInput,
+} from './backupStreaming';
 import { getAllCategories, getAllImages, type VaultBackupBundle } from './db';
 import {
   attachDeviceTokenToUrl,
   getDeviceAuthHeaders,
   notifyDeviceUnauthorized,
 } from './deviceAuth';
-import { processImageBlob } from './imageProcessor';
+import { generateId, processImageBlob } from './imageProcessor';
 
 export interface ServerVaultResponse {
   categories: Category[];
@@ -386,16 +392,264 @@ export async function exportServerBackup(): Promise<VaultBackupBundle> {
   return res.json();
 }
 
+export async function downloadServerBackupBlob(): Promise<Blob> {
+  const res = await apiFetch('/api/vault/backup?download=1', { cache: 'no-store' });
+  return res.blob();
+}
+
+export interface BackupImportProgress {
+  phase: 'reading' | 'uploading' | 'committing';
+  importedImages: number;
+  readPercent: number;
+}
+
+export interface BackupImportResult {
+  importedCategories: number;
+  importedImages: number;
+  importedOrders?: number;
+}
+
 export async function importServerBackup(
   bundle: VaultBackupBundle,
   mode: 'merge' | 'replace'
-): Promise<{ importedCategories: number; importedImages: number }> {
+): Promise<BackupImportResult> {
   const res = await apiFetch('/api/vault/restore', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ mode, bundle }),
   });
   return res.json();
+}
+
+interface PendingRestoreImage {
+  meta: Record<string, unknown>;
+  blob: Blob;
+  thumbBlob: Blob;
+  approxBytes: number;
+}
+
+export async function importServerBackupFile(
+  file: File,
+  mode: 'merge' | 'replace',
+  onProgress?: (progress: BackupImportProgress) => void
+): Promise<BackupImportResult> {
+  const beginRes = await apiFetch('/api/vault/restore/begin', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode }),
+  });
+  const { sessionId } = (await beginRes.json()) as { sessionId: string };
+
+  const MAX_BATCH_IMAGES = 4;
+  const MAX_BATCH_BYTES = 3.5 * 1024 * 1024;
+  let pending: PendingRestoreImage[] = [];
+  let pendingBytes = 0;
+  let uploadedImages = 0;
+  let lastReadPercent = 0;
+
+  const flushImageBatch = async () => {
+    if (pending.length === 0) return;
+    const batch = pending;
+    pending = [];
+    pendingBytes = 0;
+
+    onProgress?.({
+      phase: 'uploading',
+      importedImages: uploadedImages,
+      readPercent: lastReadPercent,
+    });
+
+    const formData = new FormData();
+    formData.append('sessionId', sessionId);
+    const metaList = batch.map((entry, idx) => {
+      const fileName = String(entry.meta.fileName || `restored-${idx}.jpg`);
+      formData.append(`file_${idx}`, entry.blob, fileName);
+      const thumbExt = entry.thumbBlob.type === 'image/webp' ? `thumb-${idx}.webp` : `thumb-${idx}.jpg`;
+      formData.append(`thumb_${idx}`, entry.thumbBlob, thumbExt);
+      return entry.meta;
+    });
+    formData.append('metadata', JSON.stringify(metaList));
+
+    await apiFetch('/api/vault/restore/batch', {
+      method: 'POST',
+      body: formData,
+    });
+
+    uploadedImages += batch.length;
+    onProgress?.({
+      phase: 'uploading',
+      importedImages: uploadedImages,
+      readPercent: lastReadPercent,
+    });
+  };
+
+  try {
+    const metadata = await parseBackupFileStreaming(file, {
+      onProgressBytes: (readBytes, totalBytes) => {
+        if (totalBytes > 0) {
+          lastReadPercent = Math.min(99, Math.round((readBytes / totalBytes) * 100));
+          onProgress?.({
+            phase: 'reading',
+            importedImages: uploadedImages,
+            readPercent: lastReadPercent,
+          });
+        }
+      },
+      onImage: async (item: BackupImageInput) => {
+        if (!item || typeof item.dataUrl !== 'string' || !item.dataUrl) return;
+        const blob = dataUrlToBlob(item.dataUrl);
+        if (!blob || blob.size === 0) return;
+
+        const mimeType = item.mimeType || blob.type || 'image/jpeg';
+        const fileName = item.fileName || 'restored.jpg';
+        const processed = await processImageBlob(blob, {
+          optimizeLargeUpload: false,
+          fileName,
+          mimeType,
+        });
+
+        const meta: Record<string, unknown> = {
+          id: item.id || generateId(),
+          title: item.title || 'Ảnh mẫu đã khôi phục',
+          fileName,
+          notes: item.notes || '',
+          categoryId: item.categoryId ?? null,
+          tags: Array.isArray(item.tags) ? item.tags : [],
+          width: item.width || processed.width,
+          height: item.height || processed.height,
+          size: blob.size,
+          mimeType,
+          aspectRatioType:
+            item.aspectRatioType === 'landscape' ||
+            item.aspectRatioType === 'portrait' ||
+            item.aspectRatioType === 'square'
+              ? item.aspectRatioType
+              : processed.aspectRatioType,
+          dominantColors:
+            Array.isArray(item.dominantColors) && item.dominantColors.length > 0
+              ? item.dominantColors
+              : processed.dominantColors,
+          colorFamilies:
+            Array.isArray(item.colorFamilies) && item.colorFamilies.length > 0
+              ? item.colorFamilies
+              : processed.colorFamilies,
+          isFavorite: Boolean(item.isFavorite),
+          createdAt: item.createdAt || Date.now(),
+          updatedAt: item.updatedAt || Date.now(),
+        };
+
+        const entryBytes = blob.size + processed.thumbnailBlob.size;
+        pending.push({
+          meta,
+          blob,
+          thumbBlob: processed.thumbnailBlob,
+          approxBytes: entryBytes,
+        });
+        pendingBytes += entryBytes;
+
+        if (pending.length >= MAX_BATCH_IMAGES || pendingBytes >= MAX_BATCH_BYTES) {
+          await flushImageBatch();
+        }
+      },
+    });
+
+    await flushImageBatch();
+
+    // Upload any custom order sample images in small chunks as well
+    let preparedOrders: BackupOrderInput[] | undefined;
+    if (Array.isArray(metadata.orders)) {
+      preparedOrders = [];
+      let orderFormData = new FormData();
+      let orderFileKeys: Array<{ key: string; id: string; mimeType?: string; fileName?: string }> = [];
+      let orderBatchBytes = 0;
+
+      const flushOrderFiles = async () => {
+        if (orderFileKeys.length === 0) return;
+        orderFormData.append('sessionId', sessionId);
+        orderFormData.append('orderFileKeys', JSON.stringify(orderFileKeys));
+        await apiFetch('/api/vault/restore/batch', {
+          method: 'POST',
+          body: orderFormData,
+        });
+        orderFormData = new FormData();
+        orderFileKeys = [];
+        orderBatchBytes = 0;
+      };
+
+      for (let oIdx = 0; oIdx < metadata.orders.length; oIdx++) {
+        const order = metadata.orders[oIdx];
+        if (!order) continue;
+        const nextSamples = [];
+        const samples = Array.isArray(order.sampleImages) ? order.sampleImages : [];
+        for (let sIdx = 0; sIdx < samples.length; sIdx++) {
+          const sample = samples[sIdx];
+          if (!sample) continue;
+          if (sample.dataUrl) {
+            const blob = dataUrlToBlob(sample.dataUrl);
+            if (blob && blob.size > 0) {
+              const key = `${oIdx}_${sIdx}`;
+              const mimeType = sample.mimeType || blob.type || 'image/jpeg';
+              orderFormData.append(`order_file_${key}`, blob, `${sample.id || key}.jpg`);
+              orderFileKeys.push({
+                key,
+                id: sample.id || generateId(),
+                mimeType,
+              });
+              orderBatchBytes += blob.size;
+              nextSamples.push({
+                id: sample.id,
+                sourceImageId: null,
+                title: sample.title || 'Ảnh mẫu đơn hàng',
+                uploadKey: key,
+              });
+              if (orderFileKeys.length >= MAX_BATCH_IMAGES || orderBatchBytes >= MAX_BATCH_BYTES) {
+                await flushOrderFiles();
+              }
+              continue;
+            }
+          }
+          nextSamples.push({
+            id: sample.id,
+            sourceImageId: sample.sourceImageId ?? null,
+            title: sample.title || 'Ảnh mẫu',
+          });
+        }
+        preparedOrders.push({
+          ...order,
+          sampleImages: nextSamples,
+        });
+      }
+      await flushOrderFiles();
+    }
+
+    onProgress?.({
+      phase: 'committing',
+      importedImages: uploadedImages,
+      readPercent: 100,
+    });
+
+    const commitRes = await apiFetch('/api/vault/restore/commit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId,
+        categories: Array.isArray(metadata.categories) ? metadata.categories : [],
+        ...(preparedOrders !== undefined ? { orders: preparedOrders } : {}),
+      }),
+    });
+
+    return commitRes.json();
+  } catch (err) {
+    await fetch('/api/vault/restore/abort', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getDeviceAuthHeaders(),
+      },
+      body: JSON.stringify({ sessionId }),
+    }).catch(() => {});
+    throw err;
+  }
 }
 
 export async function seedServerSampleVault(force = false): Promise<boolean> {
@@ -608,4 +862,64 @@ export async function waitForServerHealthy(timeoutMs = 25000): Promise<boolean> 
     await new Promise((r) => setTimeout(r, 750));
   }
   return false;
+}
+
+export type ActivityLogLevel = 'info' | 'warn' | 'error';
+export type ActivityLogCategory =
+  | 'system'
+  | 'device'
+  | 'image'
+  | 'category'
+  | 'order'
+  | 'backup'
+  | 'github'
+  | 'http';
+
+export interface ServerActivityLogEntry {
+  id: string;
+  ts: number;
+  level: ActivityLogLevel;
+  category: ActivityLogCategory;
+  action: string;
+  detail?: string;
+  deviceName?: string;
+  ip?: string;
+  method?: string;
+  path?: string;
+  status?: number;
+  durationMs?: number;
+}
+
+export interface ServerActivityLogsResponse {
+  logs: ServerActivityLogEntry[];
+  totalBuffered: number;
+  serverStartedAt: number;
+  uptimeSec: number;
+  memoryMb: number;
+}
+
+export async function fetchServerActivityLogs(options?: {
+  level?: 'all' | ActivityLogLevel;
+  category?: 'all' | ActivityLogCategory;
+  q?: string;
+  limit?: number;
+}): Promise<ServerActivityLogsResponse> {
+  const params = new URLSearchParams();
+  if (options?.level && options.level !== 'all') params.set('level', options.level);
+  if (options?.category && options.category !== 'all') params.set('category', options.category);
+  if (options?.q?.trim()) params.set('q', options.q.trim());
+  if (options?.limit) params.set('limit', String(options.limit));
+  const qs = params.toString();
+  const res = await apiFetch(`/api/system/logs${qs ? `?${qs}` : ''}`, {
+    cache: 'no-store',
+    headers: { 'X-Super-Admin': 'tuananh' },
+  });
+  return res.json();
+}
+
+export async function clearServerActivityLogs(): Promise<void> {
+  await apiFetch('/api/system/logs', {
+    method: 'DELETE',
+    headers: { 'X-Super-Admin': 'tuananh' },
+  });
 }

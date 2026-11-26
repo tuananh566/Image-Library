@@ -20,7 +20,6 @@ import {
 } from './lib/adminAuth';
 import {
   clearAllVaultData as clearLocalIndexedDbData,
-  type VaultBackupBundle,
 } from './lib/db';
 import {
   attachDeviceTokenToUrl,
@@ -43,10 +42,10 @@ import {
   deleteServerCategory,
   deleteServerImages,
   deleteServerOrder,
-  exportServerBackup,
+  downloadServerBackupBlob,
   fetchServerVault,
   getPendingLocalSyncCount,
-  importServerBackup,
+  importServerBackupFile,
   reorderServerCategories,
   saveFullServerOrder,
   saveServerCategory,
@@ -55,6 +54,7 @@ import {
   updateServerImageMetadata,
   updateServerOrder,
   uploadServerImagesBatch,
+  type BackupImportProgress,
 } from './lib/serverVault';
 import { getLocalDateKey } from './lib/orderFilters';
 import { filterAndScoreImages } from './lib/smartSearch';
@@ -785,9 +785,7 @@ export default function App() {
 
   const handleExportBackup = async () => {
     if (!isAdmin) return;
-    const bundle = await exportServerBackup();
-    const json = JSON.stringify(bundle, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
+    const blob = await downloadServerBackupBlob();
     const url = URL.createObjectURL(blob);
     const dateStr = new Date().toISOString().slice(0, 10);
     const a = document.createElement('a');
@@ -796,17 +794,16 @@ export default function App() {
     document.body.appendChild(a);
     a.click();
     a.remove();
-    URL.revokeObjectURL(url);
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
   };
 
-  const handleImportBackup = async (file: File, mode: 'merge' | 'replace') => {
+  const handleImportBackup = async (
+    file: File,
+    mode: 'merge' | 'replace',
+    onProgress?: (progress: BackupImportProgress) => void
+  ) => {
     if (!isAdmin) throw new Error('Admin permission required');
-    const text = await file.text();
-    const parsed = JSON.parse(text) as VaultBackupBundle;
-    if (!parsed || !Array.isArray(parsed.images)) {
-      throw new Error('Invalid backup format');
-    }
-    const res = await importServerBackup(parsed, mode);
+    const res = await importServerBackupFile(file, mode, onProgress);
     await reloadVault();
     return res;
   };
