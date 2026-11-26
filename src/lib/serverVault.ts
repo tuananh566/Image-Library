@@ -992,6 +992,13 @@ export async function clearServerActivityLogs(): Promise<void> {
   });
 }
 
+export interface AutoBackupProgress {
+  phase: 'preparing' | 'writing' | 'finalizing';
+  processed: number;
+  total: number;
+  startedAt: number;
+}
+
 export interface AutoBackupStatusResponse {
   exists: boolean;
   savedAt: number | null;
@@ -1004,6 +1011,8 @@ export interface AutoBackupStatusResponse {
   trigger: 'auto' | 'manual' | null;
   isBackingUp: boolean;
   isRestoring: boolean;
+  progress?: AutoBackupProgress | null;
+  lastError?: string | null;
 }
 
 export interface AutoBackupRestoreResult {
@@ -1023,6 +1032,8 @@ export async function fetchAutoBackupStatus(): Promise<AutoBackupStatusResponse>
 
 export async function runAutoBackupNow(): Promise<{
   ok: boolean;
+  started?: boolean;
+  alreadyRunning?: boolean;
   status: AutoBackupStatusResponse;
 }> {
   const res = await apiFetch('/api/vault/auto-backup/run', {

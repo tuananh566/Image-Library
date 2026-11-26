@@ -64,19 +64,57 @@ export function BackupView({
 
   const [autoBackupStatus, setAutoBackupStatus] = useState<AutoBackupStatusResponse | null>(null);
   const [autoBackupLoading, setAutoBackupLoading] = useState(true);
-  const [isRunningAutoBackup, setIsRunningAutoBackup] = useState(false);
+  const [isStartingAutoBackup, setIsStartingAutoBackup] = useState(false);
   const [isRestoringAutoBackup, setIsRestoringAutoBackup] = useState(false);
+  const wasServerBackingUpRef = useRef(false);
+  const pollErrorStreakRef = useRef(0);
+
+  const isRunningAutoBackup = isStartingAutoBackup || Boolean(autoBackupStatus?.isBackingUp);
+
+  const applyAutoBackupStatus = useCallback((status: AutoBackupStatusResponse) => {
+    setAutoBackupStatus(status);
+    if (status.isBackingUp) {
+      wasServerBackingUpRef.current = true;
+      return;
+    }
+
+    if (wasServerBackingUpRef.current) {
+      wasServerBackingUpRef.current = false;
+      setIsStartingAutoBackup(false);
+      if (status.lastError) {
+        setStatusKind('error');
+        setStatusMessage(`Không thể tạo bản sao lưu nội bộ: ${status.lastError}`);
+      } else {
+        setStatusKind('info');
+        setStatusMessage(
+          `Đã lưu bản sao lưu nội bộ (${status.imageCount} ảnh, ${status.categoryCount} danh mục, ${status.orderCount} đơn hàng).`
+        );
+      }
+    }
+  }, []);
 
   const loadAutoBackupStatus = useCallback(async () => {
     try {
       const status = await fetchAutoBackupStatus();
-      setAutoBackupStatus(status);
-    } catch {
-      // Ignore transient status fetch failure
+      pollErrorStreakRef.current = 0;
+      applyAutoBackupStatus(status);
+    } catch (err) {
+      pollErrorStreakRef.current += 1;
+      if (wasServerBackingUpRef.current && pollErrorStreakRef.current >= 5) {
+        wasServerBackingUpRef.current = false;
+        setIsStartingAutoBackup(false);
+        setAutoBackupStatus((prev) => (prev ? { ...prev, isBackingUp: false } : prev));
+        setStatusKind('error');
+        setStatusMessage(
+          err instanceof Error && err.message
+            ? `Mất kết nối khi theo dõi tiến trình sao lưu: ${err.message}`
+            : 'Mất kết nối với server khi đang tạo bản sao lưu nội bộ.'
+        );
+      }
     } finally {
       setAutoBackupLoading(false);
     }
-  }, []);
+  }, [applyAutoBackupStatus]);
 
   useEffect(() => {
     void loadAutoBackupStatus();
@@ -96,6 +134,16 @@ export function BackupView({
     };
   }, [loadAutoBackupStatus]);
 
+  useEffect(() => {
+    if (!isRunningAutoBackup) return;
+    const timer = window.setInterval(() => {
+      void loadAutoBackupStatus();
+    }, 1000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [isRunningAutoBackup, loadAutoBackupStatus]);
+
   const formatTimestamp = (ts: number | null) => {
     if (!ts) return '—';
     return new Intl.DateTimeFormat('vi-VN', {
@@ -105,24 +153,26 @@ export function BackupView({
   };
 
   const handleRunAutoBackupNow = async () => {
-    setIsRunningAutoBackup(true);
+    setIsStartingAutoBackup(true);
+    wasServerBackingUpRef.current = true;
+    pollErrorStreakRef.current = 0;
     setStatusKind('info');
     setStatusMessage('Đang tạo bản sao lưu JSON nội bộ trên server...');
     try {
       const res = await runAutoBackupNow();
-      setAutoBackupStatus(res.status);
-      setStatusMessage(
-        `Đã lưu bản sao lưu nội bộ (${res.status.imageCount} ảnh, ${res.status.categoryCount} danh mục, ${res.status.orderCount} đơn hàng).`
-      );
+      applyAutoBackupStatus(res.status);
+      if (!res.status.isBackingUp) {
+        setIsStartingAutoBackup(false);
+      }
     } catch (err) {
+      wasServerBackingUpRef.current = false;
+      setIsStartingAutoBackup(false);
       setStatusKind('error');
       setStatusMessage(
         err instanceof Error && err.message
           ? `Không thể tạo bản sao lưu nội bộ: ${err.message}`
           : 'Không thể tạo bản sao lưu nội bộ.'
       );
-    } finally {
-      setIsRunningAutoBackup(false);
     }
   };
 
@@ -417,35 +467,61 @@ export function BackupView({
             <div className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50/70 px-3.5 py-2.5 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-300">
               {autoBackupLoading ? (
                 <span>Đang kiểm tra trạng thái bản sao lưu nội bộ...</span>
-              ) : autoBackupStatus?.exists ? (
-                <div className="space-y-1">
-                  <p>
-                    Bản sao lưu hiện có:{' '}
-                    <strong className="font-semibold text-zinc-900 dark:text-zinc-100">
-                      {formatTimestamp(autoBackupStatus.savedAt)}
-                    </strong>{' '}
-                    <span className="text-zinc-500 dark:text-zinc-400">
-                      ({autoBackupStatus.trigger === 'manual' ? 'Lưu thủ công' : 'Tự động mỗi 1 giờ'})
-                    </span>
-                  </p>
-                  <p className="text-zinc-500 dark:text-zinc-400 tabular-nums">
-                    Nội dung: {autoBackupStatus.imageCount} ảnh · {autoBackupStatus.categoryCount} danh mục · {autoBackupStatus.orderCount} đơn hàng · Dung lượng {formatFileSize(autoBackupStatus.sizeBytes)}
-                  </p>
-                  {autoBackupStatus.nextBackupAt && (
-                    <p className="text-zinc-500 dark:text-zinc-400">
-                      Lần tự động sao lưu tiếp theo: {formatTimestamp(autoBackupStatus.nextBackupAt)}
-                    </p>
-                  )}
-                </div>
               ) : (
-                <div className="space-y-1">
-                  <p className="text-amber-700 dark:text-amber-300">
-                    Chưa có tệp sao lưu tự động nào được ghi trên server.
-                  </p>
-                  {autoBackupStatus?.nextBackupAt && (
-                    <p className="text-zinc-500 dark:text-zinc-400">
-                      Hệ thống sẽ tự động tạo bản đầu tiên vào lúc {formatTimestamp(autoBackupStatus.nextBackupAt)} hoặc bạn có thể bấm &ldquo;Lưu ngay&rdquo;.
-                    </p>
+                <div className="space-y-1.5">
+                  {isRunningAutoBackup && (
+                    <div className="rounded-md border border-blue-200 bg-blue-50/80 px-2.5 py-1.5 text-blue-800 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-200">
+                      <div className="flex items-center justify-between gap-2 font-medium">
+                        <span>
+                          {autoBackupStatus?.progress?.phase === 'finalizing'
+                            ? 'Đang hoàn tất tệp sao lưu trên server...'
+                            : autoBackupStatus?.progress && autoBackupStatus.progress.total > 0
+                              ? `Đang đóng gói ảnh: ${autoBackupStatus.progress.processed}/${autoBackupStatus.progress.total} ảnh`
+                              : 'Đang chuẩn bị dữ liệu sao lưu...'}
+                        </span>
+                        {autoBackupStatus?.progress && autoBackupStatus.progress.total > 0 && (
+                          <span className="tabular-nums">
+                            {Math.round(
+                              (autoBackupStatus.progress.processed / autoBackupStatus.progress.total) * 100
+                            )}
+                            %
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {autoBackupStatus?.exists ? (
+                    <div className="space-y-1">
+                      <p>
+                        Bản sao lưu hiện có:{' '}
+                        <strong className="font-semibold text-zinc-900 dark:text-zinc-100">
+                          {formatTimestamp(autoBackupStatus.savedAt)}
+                        </strong>{' '}
+                        <span className="text-zinc-500 dark:text-zinc-400">
+                          ({autoBackupStatus.trigger === 'manual' ? 'Lưu thủ công' : 'Tự động mỗi 1 giờ'})
+                        </span>
+                      </p>
+                      <p className="text-zinc-500 dark:text-zinc-400 tabular-nums">
+                        Nội dung: {autoBackupStatus.imageCount} ảnh · {autoBackupStatus.categoryCount} danh mục · {autoBackupStatus.orderCount} đơn hàng · Dung lượng {formatFileSize(autoBackupStatus.sizeBytes)}
+                      </p>
+                      {autoBackupStatus.nextBackupAt && (
+                        <p className="text-zinc-500 dark:text-zinc-400">
+                          Lần tự động sao lưu tiếp theo: {formatTimestamp(autoBackupStatus.nextBackupAt)}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <p className="text-amber-700 dark:text-amber-300">
+                        Chưa có tệp sao lưu tự động nào được ghi trên server.
+                      </p>
+                      {autoBackupStatus?.nextBackupAt && (
+                        <p className="text-zinc-500 dark:text-zinc-400">
+                          Hệ thống sẽ tự động tạo bản đầu tiên vào lúc {formatTimestamp(autoBackupStatus.nextBackupAt)} hoặc bạn có thể bấm &ldquo;Lưu backup ngay&rdquo;.
+                        </p>
+                      )}
+                    </div>
                   )}
                 </div>
               )}
@@ -476,7 +552,15 @@ export function BackupView({
               className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-3 text-xs font-medium text-zinc-800 transition-colors hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
             >
               <RefreshCw className={`h-3.5 w-3.5 shrink-0 ${isRunningAutoBackup ? 'animate-spin' : ''}`} />
-              <span className="truncate">{isRunningAutoBackup ? 'Đang lưu...' : 'Lưu backup ngay'}</span>
+              <span className="truncate">
+                {isRunningAutoBackup
+                  ? autoBackupStatus?.progress && autoBackupStatus.progress.total > 0
+                    ? `Đang lưu (${Math.round(
+                        (autoBackupStatus.progress.processed / autoBackupStatus.progress.total) * 100
+                      )}%)`
+                    : 'Đang lưu...'
+                  : 'Lưu backup ngay'}
+              </span>
             </button>
 
             <button

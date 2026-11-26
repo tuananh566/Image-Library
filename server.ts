@@ -801,15 +801,24 @@ async function writeStreamChunk(res: Response, chunk: string): Promise<void> {
 }
 
 async function moveFileOrCopy(srcPath: string, destPath: string): Promise<void> {
-  try {
-    await fsp.rename(srcPath, destPath);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'EXDEV') {
-      await fsp.copyFile(srcPath, destPath);
-      await fsp.unlink(srcPath).catch(() => {});
+  const maxAttempts = 5;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await fsp.rename(srcPath, destPath);
       return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'EXDEV') {
+        await fsp.copyFile(srcPath, destPath);
+        await fsp.unlink(srcPath).catch(() => {});
+        return;
+      }
+      if ((code === 'EPERM' || code === 'EBUSY') && attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, 80 * attempt));
+        continue;
+      }
+      throw err;
     }
-    throw err;
   }
 }
 
@@ -849,10 +858,20 @@ interface AutoBackupMeta {
   trigger: 'auto' | 'manual';
 }
 
+interface AutoBackupProgress {
+  phase: 'preparing' | 'writing' | 'finalizing';
+  processed: number;
+  total: number;
+  startedAt: number;
+}
+
 let isAutoBackingUp = false;
 let isAutoRestoring = false;
 let nextAutoBackupAt: number | null = null;
 let autoBackupTimer: ReturnType<typeof setTimeout> | null = null;
+let autoBackupProgress: AutoBackupProgress | null = null;
+let lastAutoBackupError: string | null = null;
+let activeAutoBackupPromise: Promise<AutoBackupMeta> | null = null;
 
 async function readAutoBackupMeta(): Promise<AutoBackupMeta | null> {
   try {
@@ -899,10 +918,15 @@ async function getAutoBackupStatusPayload() {
     trigger: meta?.trigger ?? null,
     isBackingUp: isAutoBackingUp,
     isRestoring: isAutoRestoring,
+    progress: autoBackupProgress,
+    lastError: lastAutoBackupError,
   };
 }
 
 async function writeWritableChunk(stream: fs.WriteStream, chunk: string): Promise<void> {
+  if (stream.destroyed || stream.closed || stream.writableEnded) {
+    throw new Error('Luồng ghi tệp sao lưu đã đóng bất ngờ.');
+  }
   if (!stream.write(chunk, 'utf8')) {
     await new Promise<void>((resolve, reject) => {
       const onDrain = () => {
@@ -913,136 +937,251 @@ async function writeWritableChunk(stream: fs.WriteStream, chunk: string): Promis
         cleanup();
         reject(err);
       };
+      const onClose = () => {
+        cleanup();
+        reject(new Error('Luồng ghi tệp sao lưu đã đóng trước khi hoàn tất.'));
+      };
       const cleanup = () => {
         stream.off('drain', onDrain);
         stream.off('error', onError);
+        stream.off('close', onClose);
       };
       stream.once('drain', onDrain);
       stream.once('error', onError);
+      stream.once('close', onClose);
     });
   }
 }
 
-async function runInternalAutoBackup(trigger: 'auto' | 'manual'): Promise<AutoBackupMeta> {
+function runInternalAutoBackup(trigger: 'auto' | 'manual'): Promise<AutoBackupMeta> {
+  if (isAutoBackingUp && activeAutoBackupPromise) {
+    return activeAutoBackupPromise;
+  }
   if (isAutoBackingUp) {
-    const existing = await readAutoBackupMeta();
-    if (existing) return existing;
-    throw new Error('Đang có tiến trình sao lưu nội bộ khác đang chạy.');
+    return Promise.reject(new Error('Đang có tiến trình sao lưu nội bộ khác đang chạy.'));
   }
 
+  const startedAt = Date.now();
   isAutoBackingUp = true;
+  lastAutoBackupError = null;
+  autoBackupProgress = {
+    phase: 'preparing',
+    processed: 0,
+    total: 0,
+    startedAt,
+  };
+  broadcastEvent('auto-backup-updated');
+
   const tmpBackupFile = path.join(DATA_DIR, `auto-backup.tmp-${crypto.randomUUID()}.json`);
   const tmpMetaFile = path.join(DATA_DIR, `auto-backup-meta.tmp-${crypto.randomUUID()}.json`);
 
-  try {
-    await ensureStorageReady();
-    const vault = await readVaultFile();
-    const categories = [...vault.categories];
-    const images = [...vault.images];
-    const orders = [...(vault.orders || [])];
-    const savedAt = Date.now();
+  const task = (async (): Promise<AutoBackupMeta> => {
+    let ws: fs.WriteStream | null = null;
+    try {
+      await ensureStorageReady();
+      const vault = await readVaultFile();
+      const categories = [...vault.categories];
+      const images = [...vault.images];
+      const orders = [...(vault.orders || [])];
+      const savedAt = Date.now();
 
-    const ws = fs.createWriteStream(tmpBackupFile, { encoding: 'utf8' });
-    const streamFinished = new Promise<void>((resolve, reject) => {
-      ws.once('finish', resolve);
-      ws.once('error', reject);
-    });
+      autoBackupProgress = {
+        phase: 'writing',
+        processed: 0,
+        total: images.length,
+        startedAt,
+      };
+      broadcastEvent('auto-backup-updated');
 
-    await writeWritableChunk(
-      ws,
-      `{"version":1,"exportedAt":${savedAt},"categories":${JSON.stringify(categories)},"orders":[`
-    );
+      ws = fs.createWriteStream(tmpBackupFile, {
+        encoding: 'utf8',
+        highWaterMark: 4 * 1024 * 1024,
+      });
 
-    let wroteFirstOrder = false;
-    for (const order of orders) {
-      const serializedSamples = [];
-      for (const sample of order.sampleImages || []) {
-        if (sample.storedFile) {
-          const orderImgPath = resolveSafeChild(ORDER_IMAGES_DIR, sample.storedFile);
-          if (orderImgPath && fs.existsSync(orderImgPath)) {
-            const buf = await fsp.readFile(orderImgPath);
-            const mime = sample.mimeType || 'image/jpeg';
+      let streamError: Error | null = null;
+      let finishedNormally = false;
+      const currentWs = ws;
+      const streamClosed = new Promise<void>((resolve, reject) => {
+        currentWs.once('error', (err) => {
+          streamError = err;
+          reject(err);
+        });
+        currentWs.once('finish', () => {
+          finishedNormally = true;
+        });
+        currentWs.once('close', () => {
+          if (streamError) {
+            reject(streamError);
+          } else if (finishedNormally) {
+            resolve();
+          } else {
+            reject(new Error('Tệp tạm sao lưu đóng bất ngờ trước khi ghi xong.'));
+          }
+        });
+      });
+      streamClosed.catch(() => {});
+
+      await writeWritableChunk(
+        currentWs,
+        `{"version":1,"exportedAt":${savedAt},"categories":${JSON.stringify(categories)},"orders":[`
+      );
+
+      let wroteFirstOrder = false;
+      for (const order of orders) {
+        if (streamError) throw streamError;
+        const serializedSamples = [];
+        for (const sample of order.sampleImages || []) {
+          if (sample.storedFile) {
+            const orderImgPath = resolveSafeChild(ORDER_IMAGES_DIR, sample.storedFile);
+            if (orderImgPath) {
+              try {
+                const buf = await fsp.readFile(orderImgPath);
+                const mime = sample.mimeType || 'image/jpeg';
+                serializedSamples.push({
+                  id: sample.id,
+                  sourceImageId: null,
+                  title: sample.title,
+                  mimeType: mime,
+                  dataUrl: `data:${mime};base64,${buf.toString('base64')}`,
+                });
+              } catch {
+                // Skip unreadable order sample file
+              }
+            }
+          } else {
             serializedSamples.push({
               id: sample.id,
-              sourceImageId: null,
+              sourceImageId: sample.sourceImageId || sample.id,
               title: sample.title,
-              mimeType: mime,
-              dataUrl: `data:${mime};base64,${buf.toString('base64')}`,
             });
           }
-        } else {
-          serializedSamples.push({
-            id: sample.id,
-            sourceImageId: sample.sourceImageId || sample.id,
-            title: sample.title,
+        }
+        const serializedOrder = {
+          ...order,
+          sampleImages: serializedSamples,
+        };
+        const prefix = wroteFirstOrder ? ',' : '';
+        wroteFirstOrder = true;
+        await writeWritableChunk(currentWs, `${prefix}${JSON.stringify(serializedOrder)}`);
+      }
+
+      await writeWritableChunk(currentWs, '],"images":[');
+
+      let wroteFirstImage = false;
+      let exportedImageCount = 0;
+      const READ_BATCH_SIZE = 12;
+      let lastBroadcastAt = Date.now();
+
+      for (let i = 0; i < images.length; i += READ_BATCH_SIZE) {
+        if (streamError) throw streamError;
+        const batch = images.slice(i, i + READ_BATCH_SIZE);
+        const loaded = await Promise.all(
+          batch.map(async (img) => {
+            const origPath = resolveSafeChild(UPLOADS_DIR, img.storedFile);
+            if (!origPath) return null;
+            try {
+              const buf = await fsp.readFile(origPath);
+              return { img, buf };
+            } catch {
+              return null;
+            }
+          })
+        );
+
+        for (const item of loaded) {
+          if (!item) continue;
+          const { img, buf } = item;
+          const mime = img.mimeType || 'image/jpeg';
+          const { storedFile: _sf, storedThumbFile: _stf, ...meta } = img;
+          const payload = JSON.stringify({
+            ...meta,
+            dataUrl: `data:${mime};base64,${buf.toString('base64')}`,
           });
+          const prefix = wroteFirstImage ? ',' : '';
+          wroteFirstImage = true;
+          exportedImageCount++;
+          await writeWritableChunk(currentWs, `${prefix}${payload}`);
+        }
+
+        const processed = Math.min(images.length, i + batch.length);
+        autoBackupProgress = {
+          phase: 'writing',
+          processed,
+          total: images.length,
+          startedAt,
+        };
+        if (Date.now() - lastBroadcastAt >= 1200) {
+          lastBroadcastAt = Date.now();
+          broadcastEvent('auto-backup-updated');
         }
       }
-      const serializedOrder = {
-        ...order,
-        sampleImages: serializedSamples,
+
+      autoBackupProgress = {
+        phase: 'finalizing',
+        processed: images.length,
+        total: images.length,
+        startedAt,
       };
-      const prefix = wroteFirstOrder ? ',' : '';
-      wroteFirstOrder = true;
-      await writeWritableChunk(ws, `${prefix}${JSON.stringify(serializedOrder)}`);
-    }
+      broadcastEvent('auto-backup-updated');
 
-    await writeWritableChunk(ws, '],"images":[');
+      await writeWritableChunk(currentWs, ']}');
+      currentWs.end();
+      await streamClosed;
+      ws = null;
 
-    let wroteFirstImage = false;
-    let exportedImageCount = 0;
-    for (const img of images) {
-      const origPath = resolveSafeChild(UPLOADS_DIR, img.storedFile);
-      if (!origPath || !fs.existsSync(origPath)) continue;
-      const buf = await fsp.readFile(origPath);
-      const mime = img.mimeType || 'image/jpeg';
-      const { storedFile: _sf, storedThumbFile: _stf, ...meta } = img;
-      const payload = JSON.stringify({
-        ...meta,
-        dataUrl: `data:${mime};base64,${buf.toString('base64')}`,
+      await moveFileOrCopy(tmpBackupFile, AUTO_BACKUP_FILE);
+      const stat = await fsp.stat(AUTO_BACKUP_FILE);
+      const meta: AutoBackupMeta = {
+        savedAt,
+        sizeBytes: stat.size,
+        imageCount: exportedImageCount,
+        categoryCount: categories.length,
+        orderCount: orders.length,
+        trigger,
+      };
+
+      await fsp.writeFile(tmpMetaFile, JSON.stringify(meta, null, 2), 'utf8');
+      await moveFileOrCopy(tmpMetaFile, AUTO_BACKUP_META_FILE);
+
+      lastAutoBackupError = null;
+      recordActivityLog({
+        level: 'info',
+        category: 'backup',
+        action:
+          trigger === 'auto'
+            ? 'Tự động lưu bản sao lưu JSON nội bộ (mỗi 1 giờ)'
+            : 'Đã cập nhật bản sao lưu JSON nội bộ server',
+        detail: `${meta.imageCount} ảnh · ${meta.categoryCount} danh mục · ${meta.orderCount} đơn hàng · ${(meta.sizeBytes / (1024 * 1024)).toFixed(2)} MB`,
       });
-      const prefix = wroteFirstImage ? ',' : '';
-      wroteFirstImage = true;
-      exportedImageCount++;
-      await writeWritableChunk(ws, `${prefix}${payload}`);
+      return meta;
+    } catch (err) {
+      if (ws && !ws.destroyed) {
+        ws.destroy();
+      }
+      const message = err instanceof Error && err.message ? err.message : String(err);
+      lastAutoBackupError = message;
+      recordActivityLog({
+        level: 'error',
+        category: 'backup',
+        action:
+          trigger === 'auto'
+            ? 'Lỗi tự động tạo bản sao lưu JSON nội bộ'
+            : 'Lỗi tạo bản sao lưu JSON nội bộ thủ công',
+        detail: message,
+      });
+      await fsp.rm(tmpBackupFile, { force: true }).catch(() => {});
+      await fsp.rm(tmpMetaFile, { force: true }).catch(() => {});
+      throw err;
+    } finally {
+      isAutoBackingUp = false;
+      autoBackupProgress = null;
+      activeAutoBackupPromise = null;
+      broadcastEvent('auto-backup-updated');
     }
+  })();
 
-    await writeWritableChunk(ws, ']}');
-    ws.end();
-    await streamFinished;
-
-    await moveFileOrCopy(tmpBackupFile, AUTO_BACKUP_FILE);
-    const stat = await fsp.stat(AUTO_BACKUP_FILE);
-    const meta: AutoBackupMeta = {
-      savedAt,
-      sizeBytes: stat.size,
-      imageCount: exportedImageCount,
-      categoryCount: categories.length,
-      orderCount: orders.length,
-      trigger,
-    };
-
-    await fsp.writeFile(tmpMetaFile, JSON.stringify(meta, null, 2), 'utf8');
-    await moveFileOrCopy(tmpMetaFile, AUTO_BACKUP_META_FILE);
-
-    recordActivityLog({
-      level: 'info',
-      category: 'backup',
-      action:
-        trigger === 'auto'
-          ? 'Tự động lưu bản sao lưu JSON nội bộ (mỗi 1 giờ)'
-          : 'Đã cập nhật bản sao lưu JSON nội bộ server',
-      detail: `${meta.imageCount} ảnh · ${meta.categoryCount} danh mục · ${meta.orderCount} đơn hàng · ${(meta.sizeBytes / (1024 * 1024)).toFixed(2)} MB`,
-    });
-    broadcastEvent('auto-backup-updated');
-    return meta;
-  } catch (err) {
-    await fsp.rm(tmpBackupFile, { force: true }).catch(() => {});
-    await fsp.rm(tmpMetaFile, { force: true }).catch(() => {});
-    throw err;
-  } finally {
-    isAutoBackingUp = false;
-  }
+  activeAutoBackupPromise = task;
+  return task;
 }
 
 interface ParsedNodeBackupImageInput extends Partial<Omit<ServerImageRecord, 'storedFile' | 'storedThumbFile'>> {
@@ -4570,10 +4709,22 @@ async function startServer() {
 
   app.post('/api/vault/auto-backup/run', async (_req, res, next) => {
     try {
-      const meta = await runInternalAutoBackup('manual');
-      res.json({
+      if (isAutoRestoring) {
+        res.status(409).json({
+          error: 'Hệ thống đang khôi phục từ bản sao lưu. Vui lòng đợi hoàn tất.',
+        });
+        return;
+      }
+      const alreadyRunning = isAutoBackingUp;
+      if (!alreadyRunning) {
+        void runInternalAutoBackup('manual').catch((err) => {
+          console.error('Manual internal auto-backup failed:', err);
+        });
+      }
+      res.status(202).json({
         ok: true,
-        meta,
+        started: !alreadyRunning,
+        alreadyRunning,
         status: await getAutoBackupStatusPayload(),
       });
     } catch (err) {
@@ -4581,7 +4732,9 @@ async function startServer() {
     }
   });
 
-  app.get('/api/vault/auto-backup/download', (_req, res, next) => {
+  app.get('/api/vault/auto-backup/download', (req, res, next) => {
+    req.setTimeout(0);
+    res.setTimeout(0);
     try {
       if (!fs.existsSync(AUTO_BACKUP_FILE)) {
         res.status(404).json({ error: 'Chưa có tệp sao lưu tự động nội bộ trên server.' });
@@ -4605,7 +4758,9 @@ async function startServer() {
     }
   });
 
-  app.post('/api/vault/auto-backup/restore', async (_req, res, next) => {
+  app.post('/api/vault/auto-backup/restore', async (req, res, next) => {
+    req.setTimeout(0);
+    res.setTimeout(0);
     try {
       const result = await restoreFromInternalAutoBackup();
       res.json({
