@@ -790,6 +790,8 @@ export interface GithubUpdateStatusResponse {
   currentCommit: GithubCommitInfo | null;
   latestCommit: GithubCommitInfo | null;
   hasUpdate: boolean;
+  serverPendingRestart?: boolean;
+  runningBootId?: string;
   checkError: string | null;
   lastUpdatedAt: number | null;
   preservedData: GithubPreservedCounts;
@@ -862,6 +864,7 @@ export async function triggerGithubUpdate(
 export async function restartServer(): Promise<{
   ok: boolean;
   mode: 'supervisor' | 'self-respawn';
+  bootId?: string;
 }> {
   const res = await apiFetch('/api/system/restart', {
     method: 'POST',
@@ -869,9 +872,17 @@ export async function restartServer(): Promise<{
   return parseJsonResponse(res);
 }
 
-export async function waitForServerHealthy(timeoutMs = 25000): Promise<boolean> {
-  await new Promise((r) => setTimeout(r, 900));
-  const deadline = Date.now() + timeoutMs;
+export async function waitForServerHealthy(
+  timeoutMs = 25000,
+  previousBootId?: string
+): Promise<'restarted' | 'same-process' | 'timeout'> {
+  await new Promise((r) => setTimeout(r, 1000));
+  const startTime = Date.now();
+  const deadline = startTime + timeoutMs;
+  let sawDisconnect = false;
+  let sawSameBoot = false;
+  let legacyHealthyCount = 0;
+
   while (Date.now() < deadline) {
     try {
       const controller = new AbortController();
@@ -882,15 +893,43 @@ export async function waitForServerHealthy(timeoutMs = 25000): Promise<boolean> 
       });
       window.clearTimeout(timer);
       if (res.ok) {
-        const data = (await res.json().catch(() => null)) as { ok?: boolean } | null;
-        if (data?.ok) return true;
+        const data = (await res.json().catch(() => null)) as {
+          ok?: boolean;
+          bootId?: string;
+        } | null;
+        if (data?.ok) {
+          if (previousBootId) {
+            if (data.bootId && data.bootId !== previousBootId) {
+              return 'restarted';
+            }
+            if (!data.bootId && sawDisconnect) {
+              return 'restarted';
+            }
+            sawSameBoot = true;
+          } else {
+            if (data.bootId || sawDisconnect) {
+              return 'restarted';
+            }
+            legacyHealthyCount++;
+            if (legacyHealthyCount >= 5 && Date.now() - startTime > 4000) {
+              return 'same-process';
+            }
+          }
+        } else {
+          sawDisconnect = true;
+        }
+      } else {
+        sawDisconnect = true;
       }
     } catch {
-      // Server still restarting
+      sawDisconnect = true;
     }
     await new Promise((r) => setTimeout(r, 750));
   }
-  return false;
+
+  return sawSameBoot || (!sawDisconnect && legacyHealthyCount > 0)
+    ? 'same-process'
+    : 'timeout';
 }
 
 export type ActivityLogLevel = 'info' | 'warn' | 'error';

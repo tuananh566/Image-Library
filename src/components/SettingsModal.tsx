@@ -276,14 +276,21 @@ export function SettingsModal({
     setIsRestartingServer(true);
     setRestartNotice(null);
     try {
-      await restartServer();
-      const healthy = await waitForServerHealthy(25_000);
-      if (healthy) {
+      const res = await restartServer();
+      const status = await waitForServerHealthy(25_000, res.bootId);
+      if (status === 'restarted') {
         setRestartNotice({
           type: 'success',
-          message: 'Server đã khởi động lại thành công và sẵn sàng hoạt động.',
+          message:
+            'Server đã khởi động lại thành công với tiến trình mới. Hãy tải lại trang nếu bạn vừa cập nhật giao diện.',
         });
         await Promise.all([loadGithubStatus(), loadDevices()]);
+      } else if (status === 'same-process') {
+        setRestartNotice({
+          type: 'warning',
+          message:
+            'Tiến trình server cũ vẫn đang chạy (có thể do PM2/systemd hoặc cấu hình Docker chưa tự khởi động lại tiến trình mới). Hãy khởi động lại Node/Docker trên máy chủ rồi tải lại trang.',
+        });
       } else {
         setRestartNotice({
           type: 'warning',
@@ -884,6 +891,25 @@ export function SettingsModal({
                       ? ` — ${githubStatus.latestCommit.message}`
                       : ''}
                   </p>
+                )}
+
+                {githubStatus?.serverPendingRestart && !githubResult?.serverChanged && (
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-800/70 bg-amber-950/40 px-3 py-2 text-xs text-amber-200">
+                    <span>
+                      Tệp máy chủ (server.ts) trên ổ đĩa đã thay đổi nhưng server hiện tại vẫn đang chạy phiên bản cũ. Hãy khởi động lại server để áp dụng.
+                    </span>
+                    <button
+                      type="button"
+                      disabled={isRestartingServer || isUpdatingGithub}
+                      onClick={() => void handleRestartServer()}
+                      className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-amber-600 px-2.5 text-xs font-medium text-white hover:bg-amber-500 disabled:opacity-50"
+                    >
+                      <Power className="h-3.5 w-3.5" />
+                      <span>
+                        {isRestartingServer ? 'Đang khởi động lại...' : 'Restart Server ngay'}
+                      </span>
+                    </button>
+                  </div>
                 )}
               </div>
 

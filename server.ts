@@ -291,7 +291,9 @@ interface ServerActivityLogEntry {
 }
 
 const SERVER_STARTED_AT = Date.now();
+const SERVER_BOOT_ID = crypto.randomUUID();
 const MAX_ACTIVITY_LOGS = 600;
+let runningServerFileHash = '';
 let activityLogs: ServerActivityLogEntry[] = [];
 let activityLogWriteQueue: Promise<unknown> = Promise.resolve();
 
@@ -1216,6 +1218,7 @@ async function downloadAndApplyGithubTarball(
 }
 
 async function startServer() {
+  runningServerFileHash = await hashFileIfExists(path.join(process.cwd(), 'server.ts'));
   await ensureStorageReady();
   await readTrustedDevicesFile();
   await loadActivityLogs();
@@ -1279,7 +1282,11 @@ async function startServer() {
   });
 
   app.get('/api/health', (_req, res) => {
-    res.json({ ok: true });
+    res.json({
+      ok: true,
+      bootId: SERVER_BOOT_ID,
+      startedAt: SERVER_STARTED_AT,
+    });
   });
 
   // Familiar device detection & verification endpoints (allowed before device auth)
@@ -1637,14 +1644,18 @@ async function startServer() {
         checkError = err instanceof Error ? err.message : 'Không thể kiểm tra GitHub.';
       }
 
-      const [vault, devicesFile] = await Promise.all([
+      const [vault, devicesFile, diskServerHash] = await Promise.all([
         readVaultFile(),
         readTrustedDevicesFile(),
+        hashFileIfExists(path.join(process.cwd(), 'server.ts')),
       ]);
 
       const hasUpdate = Boolean(
         latestCommit &&
           (!local.currentCommit || local.currentCommit.sha !== latestCommit.sha)
+      );
+      const serverPendingRestart = Boolean(
+        runningServerFileHash && diskServerHash && runningServerFileHash !== diskServerHash
       );
 
       res.json({
@@ -1656,6 +1667,8 @@ async function startServer() {
         currentCommit: local.currentCommit,
         latestCommit,
         hasUpdate,
+        serverPendingRestart,
+        runningBootId: SERVER_BOOT_ID,
         checkError,
         lastUpdatedAt: local.savedState.updatedAt || null,
         preservedData: {
@@ -1898,7 +1911,7 @@ async function startServer() {
     isRestartingServer = true;
     const hasProcessManager = Boolean(
       process.env.pm_id !== undefined ||
-        process.env.PM2_HOME ||
+        process.env.NODE_APP_INSTANCE !== undefined ||
         process.env.INVOCATION_ID ||
         process.env.SUPERVISOR_ENABLED ||
         fs.existsSync('/.dockerenv')
@@ -1907,11 +1920,12 @@ async function startServer() {
     res.json({
       ok: true,
       mode: hasProcessManager ? 'supervisor' : 'self-respawn',
+      bootId: SERVER_BOOT_ID,
     });
 
     const performRestart = async () => {
       try {
-        await Promise.allSettled([writeQueue, devicesWriteQueue]);
+        await Promise.allSettled([writeQueue, devicesWriteQueue, activityLogWriteQueue]);
 
         for (const client of sseClients) {
           try {
@@ -1922,10 +1936,6 @@ async function startServer() {
         }
         sseClients.clear();
 
-        if (viteServer) {
-          await viteServer.close().catch(() => {});
-        }
-
         if (httpServer) {
           await new Promise<void>((resolve) => {
             const safetyTimer = setTimeout(resolve, 1500);
@@ -1935,6 +1945,13 @@ async function startServer() {
             });
             httpServer!.closeAllConnections?.();
           });
+        }
+
+        if (viteServer) {
+          await Promise.race([
+            viteServer.close().catch(() => {}),
+            new Promise((r) => setTimeout(r, 1500)),
+          ]);
         }
 
         if (!hasProcessManager) {
@@ -1949,6 +1966,7 @@ async function startServer() {
               detached: true,
               stdio: 'inherit',
               env: process.env,
+              windowsHide: true,
             }
           );
           child.unref();
@@ -1956,7 +1974,7 @@ async function startServer() {
       } catch (err) {
         console.error('Error during graceful server restart:', err);
       } finally {
-        process.exit(0);
+        process.exit(process.env.INVOCATION_ID ? 1 : 0);
       }
     };
 
@@ -3771,26 +3789,48 @@ async function startServer() {
     app.use(viteServer.middlewares);
   }
 
-  httpServer = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server listening on http://localhost:${PORT}`);
-    void readVaultFile().then((vault) => {
-      recordActivityLog({
-        level: 'info',
-        category: 'system',
-        action: 'Server đã khởi động',
-        detail: `Cổng ${PORT} · ${vault.images.length} ảnh · ${vault.categories.length} danh mục · ${(vault.orders || []).length} đơn hàng`,
-      });
-    });
-    const nets = os.networkInterfaces();
-    for (const ifaceList of Object.values(nets)) {
-      if (!ifaceList) continue;
-      for (const net of ifaceList) {
-        if (net.family === 'IPv4' && !net.internal) {
-          console.log(`Network access: http://${net.address}:${PORT}`);
+  const listenWithRetry = async (maxAttempts = 12): Promise<http.Server> => {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await new Promise<http.Server>((resolve, reject) => {
+          const server = app.listen(PORT, '0.0.0.0', () => {
+            resolve(server);
+          });
+          server.once('error', (err) => {
+            server.close(() => {});
+            reject(err);
+          });
+        });
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE' && attempt < maxAttempts) {
+          await new Promise((r) => setTimeout(r, 350));
+          continue;
         }
+        throw err;
       }
     }
+    throw new Error(`Port ${PORT} is still in use`);
+  };
+
+  httpServer = await listenWithRetry();
+  console.log(`Server listening on http://localhost:${PORT}`);
+  void readVaultFile().then((vault) => {
+    recordActivityLog({
+      level: 'info',
+      category: 'system',
+      action: 'Server đã khởi động',
+      detail: `Cổng ${PORT} · ${vault.images.length} ảnh · ${vault.categories.length} danh mục · ${(vault.orders || []).length} đơn hàng`,
+    });
   });
+  const nets = os.networkInterfaces();
+  for (const ifaceList of Object.values(nets)) {
+    if (!ifaceList) continue;
+    for (const net of ifaceList) {
+      if (net.family === 'IPv4' && !net.internal) {
+        console.log(`Network access: http://${net.address}:${PORT}`);
+      }
+    }
+  }
 }
 
 startServer().catch((err) => {
