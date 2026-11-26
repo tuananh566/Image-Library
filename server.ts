@@ -3789,7 +3789,130 @@ async function startServer() {
     app.use(viteServer.middlewares);
   }
 
+  const portLockFile = path.join(os.tmpdir(), `khoanh-server-${PORT}.json`);
+
+  const writePortLockFile = async () => {
+    try {
+      await fsp.writeFile(
+        portLockFile,
+        JSON.stringify({
+          pid: process.pid,
+          cwd: process.cwd(),
+          startedAt: SERVER_STARTED_AT,
+        }),
+        'utf8'
+      );
+    } catch {
+      // Ignore non-fatal lockfile write failure
+    }
+  };
+
+  const cleanupPortLockFile = () => {
+    try {
+      if (!fs.existsSync(portLockFile)) return;
+      const parsed = JSON.parse(fs.readFileSync(portLockFile, 'utf8')) as { pid?: number };
+      if (parsed?.pid === process.pid) {
+        fs.unlinkSync(portLockFile);
+      }
+    } catch {
+      // Ignore cleanup failure
+    }
+  };
+
+  const isPidAlive = (pid: number): boolean => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const terminateStaleAppHolder = async () => {
+    const candidatePids = new Set<number>();
+
+    try {
+      if (fs.existsSync(portLockFile)) {
+        const parsed = JSON.parse(await fsp.readFile(portLockFile, 'utf8')) as {
+          pid?: number;
+          cwd?: string;
+        };
+        if (
+          typeof parsed.pid === 'number' &&
+          parsed.pid > 1 &&
+          parsed.pid !== process.pid &&
+          parsed.pid !== process.ppid &&
+          (!parsed.cwd || parsed.cwd === process.cwd()) &&
+          isPidAlive(parsed.pid)
+        ) {
+          candidatePids.add(parsed.pid);
+        }
+      }
+    } catch {
+      // Ignore lockfile read error
+    }
+
+    // Fallback on Linux: if lockfile didn't exist yet (older process) and our /api/health answers on PORT,
+    // locate the orphaned server.ts instance in the same working directory & port.
+    if (candidatePids.size === 0 && process.platform === 'linux') {
+      try {
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), 1200);
+        const healthRes = await fetch(`http://127.0.0.1:${PORT}/api/health`, {
+          signal: controller.signal,
+        });
+        clearTimeout(t);
+        const healthJson = healthRes.ok
+          ? ((await healthRes.json().catch(() => null)) as { ok?: boolean } | null)
+          : null;
+
+        if (healthJson?.ok) {
+          const targetEntry = path.resolve(process.cwd(), 'server.ts');
+          for (const entry of fs.readdirSync('/proc')) {
+            if (!/^\d+$/.test(entry)) continue;
+            const pid = Number(entry);
+            if (pid <= 1 || pid === process.pid || pid === process.ppid) continue;
+            try {
+              const cmd = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').replace(/\0/g, ' ');
+              if (!cmd.includes('server.ts') && !cmd.includes(targetEntry)) continue;
+              const procCwd = fs.readlinkSync(`/proc/${pid}/cwd`);
+              if (procCwd !== process.cwd()) continue;
+              const envStr = fs.readFileSync(`/proc/${pid}/environ`, 'utf8');
+              const portMatch = envStr.match(/(?:^|\0)PORT=([^\0]+)/);
+              const procPort = portMatch ? Number(portMatch[1]) : 3000;
+              if (procPort === PORT) {
+                candidatePids.add(pid);
+              }
+            } catch {
+              // Ignore inaccessible /proc entry
+            }
+          }
+        }
+      } catch {
+        // Not our server or unreachable
+      }
+    }
+
+    for (const oldPid of candidatePids) {
+      try {
+        console.warn(`Stopping stale server instance (PID ${oldPid}) holding port ${PORT}...`);
+        process.kill(oldPid, 'SIGTERM');
+        const waitDeadline = Date.now() + 2000;
+        while (Date.now() < waitDeadline && isPidAlive(oldPid)) {
+          await new Promise((r) => setTimeout(r, 150));
+        }
+        if (isPidAlive(oldPid)) {
+          process.kill(oldPid, 'SIGKILL');
+          await new Promise((r) => setTimeout(r, 200));
+        }
+      } catch {
+        // Ignore if already exited
+      }
+    }
+  };
+
   const listenWithRetry = async (maxAttempts = 12): Promise<http.Server> => {
+    let attemptedTakeover = false;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         return await new Promise<http.Server>((resolve, reject) => {
@@ -3803,6 +3926,10 @@ async function startServer() {
         });
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE' && attempt < maxAttempts) {
+          if (attempt >= 3 && !attemptedTakeover) {
+            attemptedTakeover = true;
+            await terminateStaleAppHolder();
+          }
           await new Promise((r) => setTimeout(r, 350));
           continue;
         }
@@ -3813,6 +3940,53 @@ async function startServer() {
   };
 
   httpServer = await listenWithRetry();
+  await writePortLockFile();
+
+  let isShuttingDown = false;
+  const handleShutdownSignal = (signal: string) => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    cleanupPortLockFile();
+    for (const client of sseClients) {
+      try {
+        client.end();
+      } catch {
+        // Ignore closed SSE client
+      }
+    }
+    sseClients.clear();
+
+    const finish = () => {
+      process.exit(0);
+    };
+
+    const forceTimer = setTimeout(finish, 1500);
+    forceTimer.unref();
+
+    const closeAll = async () => {
+      await Promise.allSettled([writeQueue, devicesWriteQueue, activityLogWriteQueue]);
+      if (httpServer) {
+        await new Promise<void>((resolve) => {
+          httpServer!.close(() => resolve());
+          httpServer!.closeAllConnections?.();
+        });
+      }
+      if (viteServer) {
+        await Promise.race([
+          viteServer.close().catch(() => {}),
+          new Promise((r) => setTimeout(r, 800)),
+        ]);
+      }
+      console.log(`Server stopped (${signal}).`);
+      finish();
+    };
+    void closeAll();
+  };
+
+  process.once('SIGTERM', () => handleShutdownSignal('SIGTERM'));
+  process.once('SIGINT', () => handleShutdownSignal('SIGINT'));
+  process.once('exit', cleanupPortLockFile);
+
   console.log(`Server listening on http://localhost:${PORT}`);
   void readVaultFile().then((vault) => {
     recordActivityLog({
