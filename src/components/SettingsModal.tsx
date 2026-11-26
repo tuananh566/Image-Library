@@ -57,7 +57,6 @@ import { BackupView } from './BackupView';
 
 type SettingsSectionId =
   | 'root'
-  | 'admin'
   | 'devices'
   | 'backup'
   | 'github'
@@ -479,29 +478,17 @@ export function SettingsModal({
 
     return [
       {
-        id: 'admin',
-        group: 'account',
-        title: 'Xác thực Admin',
-        subtitle: 'Mở khóa quyền chỉnh sửa, tải lên và quản trị',
-        keywords: 'admin mật khẩu xác thực quyền khóa mở khóa',
-        valueText: adminStatusText,
-        valueTone: isAdmin ? 'success' : 'muted',
-        iconBgClass: isAdmin ? 'bg-emerald-500 text-white' : 'bg-zinc-600 text-white',
-        icon: isAdmin ? <ShieldCheck className="h-4 w-4" /> : <Lock className="h-4 w-4" />,
-      },
-      {
         id: 'devices',
         group: 'account',
         title: 'Thiết bị quen thuộc',
         subtitle: 'Quản lý tên thiết bị hiện tại và danh sách tin cậy',
         keywords: 'thiết bị quen thuộc tin cậy đổi tên thu hồi quên',
-        valueText: isAdmin
-          ? trustedDevices.length > 0
+        valueText:
+          trustedDevices.length > 0
             ? `${trustedDevices.length} thiết bị`
             : devicesLoading
               ? 'Đang tải...'
-              : currentDeviceLabel || 'Đã xác nhận'
-          : currentDeviceLabel || 'Đã xác nhận',
+              : currentDeviceLabel || 'Đã xác nhận',
         valueTone: 'default',
         iconBgClass: 'bg-blue-500 text-white',
         icon: <Smartphone className="h-4 w-4" />,
@@ -574,7 +561,6 @@ export function SettingsModal({
     ];
   }, [
     activeCurrentDevice,
-    adminStatusText,
     devicesLoading,
     githubStatus,
     isAdmin,
@@ -642,31 +628,9 @@ export function SettingsModal({
     }
   };
 
-  const renderAdminRequiredGate = (featureName: string) => (
-    <div className="rounded-2xl border border-zinc-200 bg-white p-6 text-center dark:border-zinc-800 dark:bg-zinc-900">
-      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-        <Lock className="h-6 w-6" />
-      </div>
-      <h2 className="mt-3 font-display text-base font-semibold text-zinc-950 dark:text-zinc-50">
-        Cần xác thực quyền Admin
-      </h2>
-      <p className="mx-auto mt-1 max-w-md text-sm text-zinc-500 dark:text-zinc-400">
-        Mục <strong>{featureName}</strong> chỉ khả dụng khi thiết bị đã mở khóa quyền Admin.
-      </p>
-      <button
-        type="button"
-        onClick={() => setActiveSection('admin')}
-        className="mt-4 inline-flex h-10 items-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-medium text-white transition-colors hover:bg-blue-500"
-      >
-        <ShieldCheck className="h-4 w-4" />
-        <span>Đi tới Xác thực Admin</span>
-      </button>
-    </div>
-  );
-
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/60 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[calc(0.75rem+var(--app-safe-top))] backdrop-blur-xs sm:px-4 sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pt-[calc(1rem+var(--app-safe-top))]"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/60 p-0 backdrop-blur-xs sm:px-4 sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pt-[calc(1rem+var(--app-safe-top))]"
       onClick={onClose}
     >
       <div
@@ -674,17 +638,14 @@ export function SettingsModal({
         aria-modal="true"
         aria-labelledby="settings-modal-title"
         onClick={(e) => e.stopPropagation()}
-        className="flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-100 shadow-2xl sm:max-h-[min(90vh,calc(100dvh-2rem-var(--app-safe-top)))] dark:border-zinc-800 dark:bg-zinc-950"
+        className="flex h-dvh w-full flex-col overflow-hidden bg-zinc-100 pb-[env(safe-area-inset-bottom)] pt-[var(--app-safe-top)] shadow-2xl sm:h-auto sm:max-h-[min(90vh,calc(100dvh-2rem-var(--app-safe-top)))] sm:max-w-3xl sm:rounded-2xl sm:border sm:border-zinc-200 sm:pb-0 sm:pt-0 dark:bg-zinc-950 dark:sm:border-zinc-800"
       >
-        {/* Header bar with iOS back navigation on subviews */}
-        <div className="relative flex h-14 shrink-0 items-center justify-between border-b border-zinc-200 bg-white/95 px-4 backdrop-blur-sm dark:border-zinc-800/90 dark:bg-zinc-950/95">
-          <div className="flex min-w-0 items-center">
+        {/* Header bar with non-overlapping 3-column grid */}
+        <div className="grid h-14 shrink-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border-b border-zinc-200 bg-white/95 px-3 backdrop-blur-sm sm:px-4 dark:border-zinc-800/90 dark:bg-zinc-950/95">
+          <div className="flex items-center">
             {!isAdmin || activeSection === 'root' ? (
-              <div className="flex items-center gap-2 pl-1">
-                <Settings className="h-5 w-5 text-zinc-700 dark:text-zinc-300" />
-                <span className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
-                  Cài đặt
-                </span>
+              <div className="flex h-9 w-9 items-center justify-center text-zinc-700 dark:text-zinc-300">
+                <Settings className="h-5 w-5" />
               </div>
             ) : (
               <button
@@ -695,9 +656,9 @@ export function SettingsModal({
                   setConfirmClearLogs(false);
                   setActiveSection('root');
                 }}
-                className="inline-flex h-9 items-center gap-1 rounded-lg px-2 text-sm font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950/40"
+                className="inline-flex h-9 shrink-0 items-center gap-0.5 rounded-lg px-1.5 text-sm font-medium whitespace-nowrap text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950/40"
               >
-                <ChevronLeft className="h-5 w-5 -ml-1" />
+                <ChevronLeft className="h-5 w-5 -ml-1 shrink-0" />
                 <span>Cài đặt</span>
               </button>
             )}
@@ -705,7 +666,7 @@ export function SettingsModal({
 
           <h1
             id="settings-modal-title"
-            className="pointer-events-none absolute left-1/2 max-w-[52%] -translate-x-1/2 truncate font-display text-base font-bold tracking-tight text-zinc-950 dark:text-zinc-50"
+            className="min-w-0 truncate text-center font-display text-[15px] font-bold tracking-tight text-zinc-950 sm:text-base dark:text-zinc-50"
           >
             {currentSectionTitle}
           </h1>
@@ -721,10 +682,10 @@ export function SettingsModal({
         </div>
 
         {/* Scrollable Content */}
-        <div className="flex flex-1 flex-col overflow-y-auto p-4 sm:p-6">
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden p-4 sm:p-6">
           {!isAdmin ? (
-            <div className="flex flex-1 flex-col items-center justify-center py-6 sm:py-10">
-              <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-6 shadow-xs sm:p-8 dark:border-zinc-800 dark:bg-zinc-900">
+            <div className="flex flex-1 flex-col items-center justify-center py-4 sm:py-10">
+              <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-5 shadow-xs sm:p-8 dark:border-zinc-800 dark:bg-zinc-900">
                 <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-600/10 text-blue-600 dark:bg-blue-500/15 dark:text-blue-400">
                   <Lock className="h-7 w-7" />
                 </div>
@@ -786,7 +747,7 @@ export function SettingsModal({
           ) : (
             <>
               {activeSection === 'root' && (
-            <div className="mx-auto max-w-2xl space-y-5">
+            <div className="mx-auto w-full min-w-0 max-w-2xl space-y-5">
               {/* Root search bar (iOS Settings style) */}
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
@@ -810,17 +771,48 @@ export function SettingsModal({
                 )}
               </div>
 
+              {/* Direct Admin lock bar when not searching */}
+              {!settingsSearch.trim() && (
+                <div className="flex w-full min-w-0 items-center justify-between gap-3 rounded-2xl border border-zinc-200/90 bg-white px-3.5 py-3 sm:px-4 dark:border-zinc-800/80 dark:bg-zinc-900">
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-500 text-white shadow-xs">
+                      <ShieldCheck className="h-4 w-4" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[15px] font-medium text-zinc-900 dark:text-zinc-100">
+                        Quyền Admin
+                      </div>
+                      <div className="truncate text-xs font-medium text-emerald-600 tabular-nums dark:text-emerald-400">
+                        {adminStatusText}
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onLogoutAdmin();
+                      setAuthError(null);
+                    }}
+                    className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 text-xs font-semibold text-rose-700 transition-colors hover:bg-rose-100 active:bg-rose-200/70 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-300 dark:hover:bg-rose-950/70"
+                  >
+                    <Lock className="h-3.5 w-3.5 shrink-0" />
+                    <span>Khóa quyền</span>
+                  </button>
+                </div>
+              )}
+
               {filteredGroups.length === 0 ? (
                 <div className="rounded-2xl border border-zinc-200 bg-white px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
                   Không tìm thấy mục cài đặt phù hợp với "{settingsSearch}".
                 </div>
               ) : (
                 filteredGroups.map((group) => (
-                  <div key={group.id} className="space-y-1.5">
+                  <div key={group.id} className="w-full min-w-0 space-y-1.5">
                     <p className="px-2 text-xs font-medium text-zinc-500 dark:text-zinc-400">
                       {group.label}
                     </p>
-                    <div className="divide-y divide-zinc-200/80 overflow-hidden rounded-2xl border border-zinc-200/90 bg-white dark:divide-zinc-800/80 dark:border-zinc-800/80 dark:bg-zinc-900">
+                    <div className="w-full min-w-0 divide-y divide-zinc-200/80 overflow-hidden rounded-2xl border border-zinc-200/90 bg-white dark:divide-zinc-800/80 dark:border-zinc-800/80 dark:bg-zinc-900">
                       {group.items.map((item) => {
                         const valueColorClass =
                           item.valueTone === 'success'
@@ -836,7 +828,7 @@ export function SettingsModal({
                             key={item.id}
                             type="button"
                             onClick={() => openSection(item.id)}
-                            className="flex min-h-[54px] w-full items-center gap-3.5 px-4 py-2.5 text-left transition-colors hover:bg-zinc-50 active:bg-zinc-100 dark:hover:bg-zinc-800/60 dark:active:bg-zinc-800"
+                            className="flex min-h-[56px] w-full min-w-0 items-center gap-3 px-3.5 py-2.5 text-left transition-colors hover:bg-zinc-50 active:bg-zinc-100 sm:gap-3.5 sm:px-4 dark:hover:bg-zinc-800/60 dark:active:bg-zinc-800"
                           >
                             <span
                               className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg shadow-xs ${item.iconBgClass}`}
@@ -848,17 +840,24 @@ export function SettingsModal({
                               <div className="truncate text-[15px] font-medium text-zinc-900 dark:text-zinc-100">
                                 {item.title}
                               </div>
+                              {item.valueText && (
+                                <div
+                                  className={`mt-0.5 truncate text-xs font-medium tabular-nums sm:hidden ${valueColorClass}`}
+                                >
+                                  {item.valueText}
+                                </div>
+                              )}
                             </div>
 
                             <div className="flex shrink-0 items-center gap-1.5">
                               {item.valueText && (
                                 <span
-                                  className={`max-w-[165px] truncate text-xs font-medium tabular-nums ${valueColorClass}`}
+                                  className={`hidden max-w-[180px] truncate text-xs font-medium tabular-nums sm:inline ${valueColorClass}`}
                                 >
                                   {item.valueText}
                                 </span>
                               )}
-                              <ChevronRight className="h-4 w-4 text-zinc-400 dark:text-zinc-500" />
+                              <ChevronRight className="h-4 w-4 shrink-0 text-zinc-400 dark:text-zinc-500" />
                             </div>
                           </button>
                         );
@@ -870,110 +869,9 @@ export function SettingsModal({
             </div>
           )}
 
-          {/* Subview 1: Admin Auth */}
-          {activeSection === 'admin' && (
-            <div className="mx-auto max-w-2xl space-y-4">
-              <section className="rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
-                <div className="flex flex-col gap-4">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h2 className="font-display text-base font-semibold text-zinc-950 dark:text-zinc-50">
-                          Trạng thái quyền Admin
-                        </h2>
-                        <span
-                          className={`text-xs font-semibold ${
-                            isAdmin
-                              ? 'text-emerald-600 dark:text-emerald-400'
-                              : 'text-zinc-500 dark:text-zinc-400'
-                          }`}
-                        >
-                          · {isAdmin ? 'Đã mở khóa' : 'Chế độ xem'}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-                        {isAdmin
-                          ? `Thiết bị này đang có quyền Admin${
-                              adminExpiresAt && Number.isFinite(adminExpiresAt)
-                                ? ` (tự khóa lại sau ${Math.max(
-                                    1,
-                                    Math.ceil((adminExpiresAt - nowMs) / 60_000)
-                                  )} phút)`
-                                : adminExpiresAt === Infinity
-                                  ? ' (mở khóa không giới hạn thời gian)'
-                                  : ''
-                            }.`
-                          : 'Mặc định thiết bị chỉ có quyền xem. Nhập mật khẩu Admin để mở khóa.'}
-                      </p>
-                    </div>
-
-                    {isAdmin && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onLogoutAdmin();
-                          setAuthError(null);
-                        }}
-                        className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-zinc-200 px-3 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                      >
-                        <Lock className="h-3.5 w-3.5" />
-                        <span>Khóa quyền Admin</span>
-                      </button>
-                    )}
-                  </div>
-
-                  {!isAdmin && (
-                    <form onSubmit={handleAdminSubmit} className="space-y-2 pt-1">
-                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                        <div className="relative flex-1">
-                          <input
-                            type={showPassword ? 'text' : 'password'}
-                            value={adminPassword}
-                            onChange={(e) => {
-                              setAdminPassword(e.target.value);
-                              if (authError) setAuthError(null);
-                            }}
-                            placeholder="Nhập mật khẩu Admin..."
-                            aria-label="Mật khẩu Admin"
-                            autoFocus
-                            className="h-10 w-full rounded-xl border border-zinc-300 bg-white pl-3.5 pr-10 text-sm text-zinc-900 focus:border-blue-600 focus:outline-none dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setShowPassword((v) => !v)}
-                            aria-label={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
-                            className="absolute right-2 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
-                          >
-                            {showPassword ? (
-                              <EyeOff className="h-4 w-4" />
-                            ) : (
-                              <Eye className="h-4 w-4" />
-                            )}
-                          </button>
-                        </div>
-                        <button
-                          type="submit"
-                          disabled={!adminPassword.trim()}
-                          className="h-10 shrink-0 rounded-xl bg-blue-600 px-5 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          Xác thực
-                        </button>
-                      </div>
-                      {authError && (
-                        <p className="text-xs font-medium text-rose-600 dark:text-rose-400">
-                          {authError}
-                        </p>
-                      )}
-                    </form>
-                  )}
-                </div>
-              </section>
-            </div>
-          )}
-
           {/* Subview 2: Familiar / Trusted Devices */}
           {activeSection === 'devices' && (
-            <div className="mx-auto max-w-2xl space-y-5">
+            <div className="mx-auto w-full min-w-0 max-w-2xl space-y-5">
               {/* Current Device Card */}
               <section className="rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1095,8 +993,7 @@ export function SettingsModal({
               </section>
 
               {/* Full Trusted Devices List (Admin only) */}
-              {isAdmin ? (
-                <section className="rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
+              <section className="rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
                   <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <h2 className="font-display text-base font-semibold text-zinc-950 tabular-nums dark:text-zinc-50">
@@ -1268,37 +1165,29 @@ export function SettingsModal({
                     </div>
                   )}
                 </section>
-              ) : (
-                renderAdminRequiredGate('Danh sách tất cả thiết bị đã tin cậy')
-              )}
             </div>
           )}
 
           {/* Subview 3: Backup & Storage */}
           {activeSection === 'backup' && (
-            <div className="mx-auto max-w-2xl">
-              {isAdmin ? (
-                <BackupView
-                  embedded
-                  stats={stats}
-                  onExportBackup={onExportBackup}
-                  onImportBackup={onImportBackup}
-                  onRestoreAutoBackup={onRestoreAutoBackup}
-                  onRestoreSampleVault={onRestoreSampleVault}
-                  onClearAllData={onClearAllData}
-                  pendingLocalSync={pendingLocalSync}
-                  onSyncLocalToServer={onSyncLocalToServer}
-                />
-              ) : (
-                renderAdminRequiredGate('Lưu trữ Server & Sao lưu')
-              )}
+            <div className="mx-auto w-full min-w-0 max-w-2xl">
+              <BackupView
+                embedded
+                stats={stats}
+                onExportBackup={onExportBackup}
+                onImportBackup={onImportBackup}
+                onRestoreAutoBackup={onRestoreAutoBackup}
+                onRestoreSampleVault={onRestoreSampleVault}
+                onClearAllData={onClearAllData}
+                pendingLocalSync={pendingLocalSync}
+                onSyncLocalToServer={onSyncLocalToServer}
+              />
             </div>
           )}
 
           {/* Subview 4: GitHub Update */}
           {activeSection === 'github' && (
-            <div className="mx-auto max-w-2xl">
-              {isAdmin ? (
+            <div className="mx-auto w-full min-w-0 max-w-2xl">
                 <section className="rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
@@ -1586,16 +1475,12 @@ export function SettingsModal({
                     </button>
                   </div>
                 </section>
-              ) : (
-                renderAdminRequiredGate('Cập nhật từ GitHub')
-              )}
             </div>
           )}
 
           {/* Subview 5: Server Restart */}
           {activeSection === 'server-restart' && (
-            <div className="mx-auto max-w-2xl">
-              {isAdmin ? (
+            <div className="mx-auto w-full min-w-0 max-w-2xl">
                 <section className="rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                     <div>
@@ -1685,19 +1570,16 @@ export function SettingsModal({
                     </div>
                   )}
                 </section>
-              ) : (
-                renderAdminRequiredGate('Khởi động lại Server')
-              )}
             </div>
           )}
 
           {/* Subview 6: Server Activity Logs (`tuananh` Super-Admin only) */}
           {activeSection === 'server-logs' && isSuperAdmin && (
-            <div className="flex flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+            <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
               {/* Toolbar */}
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3.5 dark:border-zinc-800">
+              <div className="flex flex-col gap-3 border-b border-zinc-200 px-3.5 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-4 dark:border-zinc-800">
                 <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-zinc-500 dark:text-zinc-400">
                     <span className="font-medium text-violet-600 dark:text-violet-400">
                       Chế độ tuananh
                     </span>
@@ -1715,16 +1597,16 @@ export function SettingsModal({
                       </>
                     )}
                   </div>
-                  <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                  <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
                     Hiển thị tối đa 300 hoạt động gần nhất theo bộ lọc hiện tại.
                   </p>
                 </div>
 
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
                   <button
                     type="button"
                     onClick={() => setAutoRefreshLogs((v) => !v)}
-                    className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors ${
+                    className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors sm:h-8 ${
                       autoRefreshLogs
                         ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800/80 dark:bg-emerald-950/50 dark:text-emerald-300'
                         : 'border-zinc-300 bg-zinc-50 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800'
@@ -1742,7 +1624,7 @@ export function SettingsModal({
                     type="button"
                     disabled={logsLoading}
                     onClick={() => void loadServerLogs()}
-                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-300 bg-zinc-50 px-2.5 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-zinc-300 bg-zinc-50 px-2.5 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100 disabled:opacity-50 sm:h-8 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
                   >
                     <RefreshCw className={`h-3.5 w-3.5 ${logsLoading ? 'animate-spin' : ''}`} />
                     <span>Làm mới</span>
@@ -1764,7 +1646,7 @@ export function SettingsModal({
                       a.remove();
                       window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
                     }}
-                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-300 bg-zinc-50 px-2.5 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-zinc-300 bg-zinc-50 px-2.5 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100 disabled:opacity-50 sm:h-8 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
                   >
                     <Download className="h-3.5 w-3.5" />
                     <span>Tải log</span>
@@ -1775,7 +1657,7 @@ export function SettingsModal({
                       <button
                         type="button"
                         onClick={() => setConfirmClearLogs(false)}
-                        className="h-8 rounded-lg border border-zinc-300 px-2 text-xs text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                        className="h-9 flex-1 rounded-lg border border-zinc-300 px-2 text-xs text-zinc-700 hover:bg-zinc-100 sm:h-8 sm:flex-none dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
                       >
                         Hủy
                       </button>
@@ -1792,7 +1674,7 @@ export function SettingsModal({
                             setIsClearingLogs(false);
                           }
                         }}
-                        className="h-8 rounded-lg bg-rose-600 px-2.5 text-xs font-medium text-white hover:bg-rose-500 disabled:opacity-50"
+                        className="h-9 flex-1 rounded-lg bg-rose-600 px-2.5 text-xs font-medium text-white hover:bg-rose-500 disabled:opacity-50 sm:h-8 sm:flex-none"
                       >
                         Xóa hết
                       </button>
@@ -1801,7 +1683,7 @@ export function SettingsModal({
                     <button
                       type="button"
                       onClick={() => setConfirmClearLogs(true)}
-                      className="inline-flex h-8 items-center gap-1 rounded-lg border border-rose-200 px-2.5 text-xs font-medium text-rose-600 transition-colors hover:bg-rose-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/50"
+                      className="inline-flex h-9 items-center justify-center gap-1 rounded-lg border border-rose-200 px-2.5 text-xs font-medium text-rose-600 transition-colors hover:bg-rose-50 sm:h-8 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950/50"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                       <span>Xóa log</span>
@@ -1811,52 +1693,54 @@ export function SettingsModal({
               </div>
 
               {/* Filters Bar */}
-              <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950/40">
-                <div className="relative min-w-[180px] flex-1">
+              <div className="flex flex-col gap-2 border-b border-zinc-200 bg-zinc-50 px-3.5 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:px-4 dark:border-zinc-800 dark:bg-zinc-950/40">
+                <div className="relative w-full sm:min-w-[180px] sm:flex-1">
                   <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400 dark:text-zinc-500" />
                   <input
                     type="text"
                     value={logSearchQuery}
                     onChange={(e) => setLogSearchQuery(e.target.value)}
                     placeholder="Tìm theo hành động, thiết bị, API, IP..."
-                    className="h-8 w-full rounded-lg border border-zinc-300 bg-white pl-8 pr-3 text-xs text-zinc-900 placeholder:text-zinc-400 focus:border-violet-500 focus:outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder:text-zinc-500"
+                    className="h-9 w-full rounded-lg border border-zinc-300 bg-white pl-8 pr-3 text-xs text-zinc-900 placeholder:text-zinc-400 focus:border-violet-500 focus:outline-none sm:h-8 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder:text-zinc-500"
                   />
                 </div>
 
-                <select
-                  value={logLevelFilter}
-                  onChange={(e) => setLogLevelFilter(e.target.value as 'all' | ActivityLogLevel)}
-                  aria-label="Lọc mức độ log"
-                  className="h-8 rounded-lg border border-zinc-300 bg-white px-2.5 text-xs text-zinc-800 focus:border-violet-500 focus:outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
-                >
-                  <option value="all">Tất cả mức độ</option>
-                  <option value="info">Thông tin (Info)</option>
-                  <option value="warn">Cảnh báo (Warn)</option>
-                  <option value="error">Lỗi (Error)</option>
-                </select>
+                <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto">
+                  <select
+                    value={logLevelFilter}
+                    onChange={(e) => setLogLevelFilter(e.target.value as 'all' | ActivityLogLevel)}
+                    aria-label="Lọc mức độ log"
+                    className="h-9 w-full min-w-0 rounded-lg border border-zinc-300 bg-white px-2.5 text-xs text-zinc-800 focus:border-violet-500 focus:outline-none sm:h-8 sm:w-auto dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                  >
+                    <option value="all">Tất cả mức độ</option>
+                    <option value="info">Thông tin (Info)</option>
+                    <option value="warn">Cảnh báo (Warn)</option>
+                    <option value="error">Lỗi (Error)</option>
+                  </select>
 
-                <select
-                  value={logCategoryFilter}
-                  onChange={(e) =>
-                    setLogCategoryFilter(e.target.value as 'all' | ActivityLogCategory)
-                  }
-                  aria-label="Lọc nhóm hoạt động"
-                  className="h-8 rounded-lg border border-zinc-300 bg-white px-2.5 text-xs text-zinc-800 focus:border-violet-500 focus:outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
-                >
-                  <option value="all">Tất cả nhóm</option>
-                  <option value="system">Hệ thống</option>
-                  <option value="device">Thiết bị</option>
-                  <option value="image">Ảnh mẫu</option>
-                  <option value="category">Danh mục</option>
-                  <option value="order">Đơn hàng</option>
-                  <option value="backup">Sao lưu / Khôi phục</option>
-                  <option value="github">GitHub</option>
-                  <option value="http">HTTP khác</option>
-                </select>
+                  <select
+                    value={logCategoryFilter}
+                    onChange={(e) =>
+                      setLogCategoryFilter(e.target.value as 'all' | ActivityLogCategory)
+                    }
+                    aria-label="Lọc nhóm hoạt động"
+                    className="h-9 w-full min-w-0 rounded-lg border border-zinc-300 bg-white px-2.5 text-xs text-zinc-800 focus:border-violet-500 focus:outline-none sm:h-8 sm:w-auto dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                  >
+                    <option value="all">Tất cả nhóm</option>
+                    <option value="system">Hệ thống</option>
+                    <option value="device">Thiết bị</option>
+                    <option value="image">Ảnh mẫu</option>
+                    <option value="category">Danh mục</option>
+                    <option value="order">Đơn hàng</option>
+                    <option value="backup">Sao lưu / Khôi phục</option>
+                    <option value="github">GitHub</option>
+                    <option value="http">HTTP khác</option>
+                  </select>
+                </div>
               </div>
 
               {/* Log Entries */}
-              <div className="space-y-1.5 p-3.5">
+              <div className="space-y-2 p-3 sm:p-3.5">
                 {logsError && (
                   <div className="mb-3 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-200">
                     <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-500 dark:text-rose-400" />
@@ -1897,9 +1781,9 @@ export function SettingsModal({
                     return (
                       <div
                         key={entry.id}
-                        className={`rounded-xl border px-3.5 py-2.5 text-xs ${levelStyle}`}
+                        className={`rounded-xl border px-3 py-2.5 text-xs sm:px-3.5 ${levelStyle}`}
                       >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center justify-between gap-2">
                           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                             <span className={`font-mono text-[10px] font-semibold uppercase ${levelTextClass}`}>
                               {entry.level}
@@ -1910,21 +1794,23 @@ export function SettingsModal({
                             <span className="font-mono text-[10px] text-zinc-500 dark:text-zinc-400">
                               {entry.category}
                             </span>
-                            <span aria-hidden="true" className="text-zinc-400">
-                              ·
-                            </span>
-                            <span className="font-medium text-zinc-900 dark:text-zinc-100">
-                              {entry.action}
-                            </span>
                           </div>
                           <span className="shrink-0 font-mono text-[11px] text-zinc-500 tabular-nums dark:text-zinc-400">
                             {timeText}
                           </span>
                         </div>
 
+                        <p className="mt-1 font-medium text-zinc-900 dark:text-zinc-100">
+                          {entry.action}
+                        </p>
+
                         {(entry.detail || entry.deviceName || entry.ip) && (
                           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
-                            {entry.detail && <span className="break-all">{entry.detail}</span>}
+                            {entry.detail && (
+                              <span className="min-w-0 max-w-full break-words [overflow-wrap:anywhere]">
+                                {entry.detail}
+                              </span>
+                            )}
                             {entry.deviceName && (
                               <span className="text-blue-600 dark:text-blue-300">
                                 Thiết bị: {entry.deviceName}

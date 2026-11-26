@@ -354,12 +354,12 @@ export function BackupView({
         )}
 
       {/* Storage Metrics Row */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <div className="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4">
+        <div className="rounded-xl border border-zinc-200 bg-white p-4 sm:p-5 dark:border-zinc-800 dark:bg-zinc-950">
           <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
             Ảnh mẫu đã lưu
           </p>
-          <p className="mt-2 font-display text-2xl font-bold tabular-nums text-zinc-950 dark:text-zinc-50">
+          <p className="mt-1.5 font-display text-xl font-bold tabular-nums text-zinc-950 sm:mt-2 sm:text-2xl dark:text-zinc-50">
             {stats.imageCount}
           </p>
           <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
@@ -367,11 +367,11 @@ export function BackupView({
           </p>
         </div>
 
-        <div className="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="rounded-xl border border-zinc-200 bg-white p-4 sm:p-5 dark:border-zinc-800 dark:bg-zinc-950">
           <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
             Dung lượng ảnh gốc
           </p>
-          <p className="mt-2 font-display text-2xl font-bold tabular-nums text-zinc-950 dark:text-zinc-50">
+          <p className="mt-1.5 font-display text-xl font-bold tabular-nums text-zinc-950 sm:mt-2 sm:text-2xl dark:text-zinc-50">
             {formatFileSize(stats.totalBytes)}
           </p>
           <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
@@ -379,14 +379,14 @@ export function BackupView({
           </p>
         </div>
 
-        <div className="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="col-span-2 rounded-xl border border-zinc-200 bg-white p-4 sm:col-span-1 sm:p-5 dark:border-zinc-800 dark:bg-zinc-950">
           <div className="flex items-center justify-between">
             <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
               Phạm vi truy cập
             </p>
             <HardDrive className="h-4 w-4 text-zinc-400" />
           </div>
-          <p className="mt-2 font-display text-xl font-bold text-zinc-950 dark:text-zinc-50">
+          <p className="mt-1.5 font-display text-lg font-bold text-zinc-950 sm:mt-2 sm:text-xl dark:text-zinc-50">
             Đa thiết bị
           </p>
           <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
@@ -453,12 +453,12 @@ export function BackupView({
           </div>
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-2.5">
+        <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2.5">
           <button
             type="button"
             disabled={!autoBackupStatus?.exists || isBusy || isRunningAutoBackup || isRestoringAutoBackup}
             onClick={() => void handleRestoreFromAutoBackup()}
-            className="inline-flex h-10 items-center gap-2 rounded-lg bg-amber-600 px-4 text-sm font-semibold text-white transition-colors hover:bg-amber-500 disabled:opacity-50"
+            className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-amber-600 px-4 text-sm font-semibold text-white transition-colors hover:bg-amber-500 disabled:opacity-50 sm:w-auto"
           >
             <History className={`h-4 w-4 ${isRestoringAutoBackup ? 'animate-spin' : ''}`} />
             <span>
@@ -468,25 +468,27 @@ export function BackupView({
             </span>
           </button>
 
-          <button
-            type="button"
-            disabled={isBusy || isRunningAutoBackup || isRestoringAutoBackup}
-            onClick={() => void handleRunAutoBackupNow()}
-            className="inline-flex h-10 items-center gap-2 rounded-lg border border-zinc-300 bg-white px-3.5 text-xs font-medium text-zinc-800 transition-colors hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${isRunningAutoBackup ? 'animate-spin' : ''}`} />
-            <span>{isRunningAutoBackup ? 'Đang lưu...' : 'Lưu bản backup ngay'}</span>
-          </button>
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center sm:gap-2.5">
+            <button
+              type="button"
+              disabled={isBusy || isRunningAutoBackup || isRestoringAutoBackup}
+              onClick={() => void handleRunAutoBackupNow()}
+              className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-3 text-xs font-medium text-zinc-800 transition-colors hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 shrink-0 ${isRunningAutoBackup ? 'animate-spin' : ''}`} />
+              <span className="truncate">{isRunningAutoBackup ? 'Đang lưu...' : 'Lưu backup ngay'}</span>
+            </button>
 
-          <button
-            type="button"
-            disabled={!autoBackupStatus?.exists || isBusy || isRunningAutoBackup || isRestoringAutoBackup}
-            onClick={() => void handleDownloadAutoBackup()}
-            className="inline-flex h-10 items-center gap-2 rounded-lg border border-zinc-300 bg-white px-3.5 text-xs font-medium text-zinc-800 transition-colors hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-          >
-            <Download className="h-3.5 w-3.5" />
-            <span>Tải file backup này</span>
-          </button>
+            <button
+              type="button"
+              disabled={!autoBackupStatus?.exists || isBusy || isRunningAutoBackup || isRestoringAutoBackup}
+              onClick={() => void handleDownloadAutoBackup()}
+              className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-3 text-xs font-medium text-zinc-800 transition-colors hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              <Download className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">Tải file backup</span>
+            </button>
+          </div>
         </div>
       </section>
 
@@ -509,7 +511,7 @@ export function BackupView({
               type="button"
               disabled={isBusy || stats.imageCount === 0}
               onClick={handleExport}
-              className="inline-flex h-10 items-center gap-2 rounded-lg bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200"
+              className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50 sm:w-auto dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200"
             >
               <Download className="h-4 w-4" />
               <span>Tải xuống bản sao lưu</span>
@@ -566,7 +568,7 @@ export function BackupView({
               type="button"
               disabled={isBusy}
               onClick={() => importInputRef.current?.click()}
-              className="inline-flex h-10 items-center gap-2 rounded-lg border border-zinc-300 bg-white px-4 text-sm font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+              className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white px-4 text-sm font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-50 sm:w-auto dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
             >
               <Upload className="h-4 w-4" />
               <span>Chọn tệp JSON để nhập</span>
