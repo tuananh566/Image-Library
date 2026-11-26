@@ -36,20 +36,28 @@ export function dataUrlToBlob(dataUrl: string): Blob | null {
   if (base64Match) {
     const mimeType = (base64Match[1] || 'image/jpeg').trim();
     const base64Body = base64Match[2].replace(/\s+/g, '');
-    const binary = atob(base64Body);
-    const len = binary.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-      bytes[i] = binary.charCodeAt(i);
+    try {
+      const binary = atob(base64Body);
+      const len = binary.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return new Blob([bytes], { type: mimeType });
+    } catch {
+      return null;
     }
-    return new Blob([bytes], { type: mimeType });
   }
 
   const plainMatch = /^data:([^;,]+)?(?:;[^,]*)?,(.*)$/is.exec(trimmed);
   if (plainMatch) {
     const mimeType = (plainMatch[1] || 'text/plain').trim();
-    const decoded = decodeURIComponent(plainMatch[2]);
-    return new Blob([decoded], { type: mimeType });
+    try {
+      const decoded = decodeURIComponent(plainMatch[2]);
+      return new Blob([decoded], { type: mimeType });
+    } catch {
+      return null;
+    }
   }
 
   return null;
@@ -136,13 +144,18 @@ export async function parseBackupFileStreaming(
     } else if (key === 'exportedAt' && typeof parsed === 'number') {
       metadata.exportedAt = parsed;
     } else if (key === 'categories') {
-      if (!Array.isArray(parsed)) {
+      if (parsed === null || parsed === undefined) {
+        metadata.categories = [];
+      } else if (!Array.isArray(parsed)) {
         throw new Error('Danh sách danh mục trong tệp sao lưu không hợp lệ.');
+      } else {
+        metadata.categories = parsed as Category[];
       }
-      metadata.categories = parsed as Category[];
     } else if (key === 'orders') {
       if (Array.isArray(parsed)) {
         metadata.orders = parsed as BackupOrderInput[];
+      } else if (parsed === null) {
+        metadata.orders = [];
       }
     }
   };
@@ -207,7 +220,11 @@ export async function parseBackupFileStreaming(
         chunks.push(text.slice(startPos, pos));
         if (!inString) {
           const rawKey = flushChunks();
-          currentKey = JSON.parse(rawKey) as string;
+          try {
+            currentKey = JSON.parse(rawKey) as string;
+          } catch {
+            throw new Error('Tên trường JSON trong tệp sao lưu không hợp lệ.');
+          }
           ctx.state = 'EXPECT_COLON';
         }
         continue;

@@ -147,21 +147,50 @@ async function assertOk(res: Response): Promise<Response> {
   }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
+    const trimmed = text.trim();
     try {
-      const parsed = JSON.parse(text) as { error?: string; message?: string };
+      const parsed = JSON.parse(trimmed) as { error?: string; message?: string };
       if (parsed?.error) throw new Error(parsed.error);
       if (parsed?.message) throw new Error(parsed.message);
     } catch (e) {
-      if (e instanceof Error && e.message && !text.startsWith('{')) {
+      if (e instanceof Error && e.message && !trimmed.startsWith('{')) {
         throw e;
       }
-      if (e instanceof Error && text.startsWith('{') && e.message !== 'Unexpected end of JSON input') {
+      if (e instanceof Error && trimmed.startsWith('{') && e.message !== 'Unexpected end of JSON input') {
         throw e;
       }
     }
-    throw new Error(text || `HTTP ${res.status}`);
+    if (
+      res.status === 404 &&
+      (trimmed.startsWith('<!') || trimmed.startsWith('<html') || trimmed.includes('Cannot '))
+    ) {
+      throw new Error(
+        'Máy chủ chưa chạy phiên bản backend mới nhất (thiếu API). Hãy bấm "Restart Server" rồi tải lại trang.'
+      );
+    }
+    throw new Error(trimmed || `HTTP ${res.status}`);
   }
   return res;
+}
+
+async function parseJsonResponse<T>(res: Response): Promise<T> {
+  const text = await res.text();
+  const trimmed = text.trim();
+  if (!trimmed) {
+    throw new Error(
+      'Máy chủ trả về phản hồi rỗng. Vui lòng thử lại hoặc bấm "Restart Server" trong Cài đặt.'
+    );
+  }
+  if (trimmed.startsWith('<!') || trimmed.startsWith('<html')) {
+    throw new Error(
+      'Máy chủ chưa áp dụng bản cập nhật backend (trả về HTML thay vì JSON). Hãy bấm "Restart Server" rồi tải lại trang.'
+    );
+  }
+  try {
+    return JSON.parse(trimmed) as T;
+  } catch {
+    throw new Error('Phản hồi từ máy chủ không phải dữ liệu JSON hợp lệ.');
+  }
 }
 
 async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
@@ -174,7 +203,7 @@ async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promi
 
 export async function fetchServerVault(): Promise<ServerVaultResponse> {
   const res = await apiFetch('/api/vault', { cache: 'no-store' });
-  const data = (await res.json()) as ServerVaultResponse;
+  const data = await parseJsonResponse<ServerVaultResponse>(res);
   return {
     ...data,
     images: (data.images || []).map(hydrateImageUrls),
@@ -188,7 +217,7 @@ export async function saveServerCategory(category: Category): Promise<Category> 
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(category),
   });
-  return res.json();
+  return parseJsonResponse<Category>(res);
 }
 
 export async function deleteServerCategory(categoryId: string): Promise<void> {
@@ -211,7 +240,7 @@ export async function reorderServerCategories(orderedIds: string[]): Promise<Cat
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ orderedIds }),
   });
-  const data = (await res.json()) as { categories?: Category[] };
+  const data = await parseJsonResponse<{ categories?: Category[] }>(res);
   return data.categories || [];
 }
 
@@ -229,7 +258,7 @@ export async function uploadServerImage(record: VaultImageRecord): Promise<Vault
     method: 'POST',
     body: formData,
   });
-  return hydrateImageUrls((await res.json()) as VaultImageView);
+  return hydrateImageUrls(await parseJsonResponse<VaultImageView>(res));
 }
 
 export async function uploadServerImagesBatch(records: VaultImageRecord[]): Promise<VaultImageView[]> {
@@ -254,7 +283,7 @@ export async function uploadServerImagesBatch(records: VaultImageRecord[]): Prom
     method: 'POST',
     body: formData,
   });
-  const data = (await res.json()) as { images?: VaultImageView[] };
+  const data = await parseJsonResponse<{ images?: VaultImageView[] }>(res);
   return (data.images || []).map(hydrateImageUrls);
 }
 
@@ -267,7 +296,7 @@ export async function updateServerImageMetadata(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
   });
-  return hydrateImageUrls((await res.json()) as VaultImageView);
+  return hydrateImageUrls(await parseJsonResponse<VaultImageView>(res));
 }
 
 export async function batchUpdateServerImages(
@@ -328,7 +357,7 @@ export async function createServerOrder(input: CreateServerOrderInput): Promise<
     method: 'POST',
     body: formData,
   });
-  return hydrateOrderUrls((await res.json()) as OrderRecord);
+  return hydrateOrderUrls(await parseJsonResponse<OrderRecord>(res));
 }
 
 export interface UpdateServerOrderInput extends CreateServerOrderInput {
@@ -366,7 +395,7 @@ export async function saveFullServerOrder(
     method: 'PUT',
     body: formData,
   });
-  return hydrateOrderUrls((await res.json()) as OrderRecord);
+  return hydrateOrderUrls(await parseJsonResponse<OrderRecord>(res));
 }
 
 export async function updateServerOrder(
@@ -378,7 +407,7 @@ export async function updateServerOrder(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
   });
-  return hydrateOrderUrls((await res.json()) as OrderRecord);
+  return hydrateOrderUrls(await parseJsonResponse<OrderRecord>(res));
 }
 
 export async function deleteServerOrder(orderId: string): Promise<void> {
@@ -389,7 +418,7 @@ export async function deleteServerOrder(orderId: string): Promise<void> {
 
 export async function exportServerBackup(): Promise<VaultBackupBundle> {
   const res = await apiFetch('/api/vault/backup', { cache: 'no-store' });
-  return res.json();
+  return parseJsonResponse<VaultBackupBundle>(res);
 }
 
 export async function downloadServerBackupBlob(): Promise<Blob> {
@@ -418,7 +447,7 @@ export async function importServerBackup(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ mode, bundle }),
   });
-  return res.json();
+  return parseJsonResponse<BackupImportResult>(res);
 }
 
 interface PendingRestoreImage {
@@ -438,7 +467,7 @@ export async function importServerBackupFile(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ mode }),
   });
-  const { sessionId } = (await beginRes.json()) as { sessionId: string };
+  const { sessionId } = await parseJsonResponse<{ sessionId: string }>(beginRes);
 
   const MAX_BATCH_IMAGES = 4;
   const MAX_BATCH_BYTES = 3.5 * 1024 * 1024;
@@ -638,7 +667,7 @@ export async function importServerBackupFile(
       }),
     });
 
-    return commitRes.json();
+    return parseJsonResponse<BackupImportResult>(commitRes);
   } catch (err) {
     await fetch('/api/vault/restore/abort', {
       method: 'POST',
@@ -790,7 +819,7 @@ export async function fetchGithubUpdateStatus(
   const res = await apiFetch(`/api/system/github-status${qs ? `?${qs}` : ''}`, {
     cache: 'no-store',
   });
-  return res.json();
+  return parseJsonResponse<GithubUpdateStatusResponse>(res);
 }
 
 export async function saveGithubConfig(input: {
@@ -810,7 +839,7 @@ export async function saveGithubConfig(input: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
   });
-  return res.json();
+  return parseJsonResponse(res);
 }
 
 export async function triggerGithubUpdate(
@@ -827,7 +856,7 @@ export async function triggerGithubUpdate(
       ...(githubToken?.trim() ? { githubToken: githubToken.trim() } : {}),
     }),
   });
-  return res.json();
+  return parseJsonResponse<GithubUpdateResult>(res);
 }
 
 export async function restartServer(): Promise<{
@@ -837,7 +866,7 @@ export async function restartServer(): Promise<{
   const res = await apiFetch('/api/system/restart', {
     method: 'POST',
   });
-  return res.json();
+  return parseJsonResponse(res);
 }
 
 export async function waitForServerHealthy(timeoutMs = 25000): Promise<boolean> {
@@ -914,7 +943,7 @@ export async function fetchServerActivityLogs(options?: {
     cache: 'no-store',
     headers: { 'X-Super-Admin': 'tuananh' },
   });
-  return res.json();
+  return parseJsonResponse<ServerActivityLogsResponse>(res);
 }
 
 export async function clearServerActivityLogs(): Promise<void> {

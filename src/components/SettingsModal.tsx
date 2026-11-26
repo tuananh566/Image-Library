@@ -912,12 +912,25 @@ export function SettingsModal({
                       </p>
                       {githubResult.serverChanged && (
                         <p className="text-amber-300">
-                          Lưu ý: Tệp máy chủ (server.ts) vừa được cập nhật — nếu chạy production, hãy khởi động lại tiến trình Node để áp dụng thay đổi backend.
+                          Lưu ý: Tệp máy chủ (server.ts) vừa được cập nhật — hãy bấm <strong>Restart Server ngay</strong> bên dưới (rồi tải lại trang) để áp dụng thay đổi backend.
                         </p>
                       )}
                     </div>
                   </div>
-                  <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {githubResult.serverChanged && (
+                      <button
+                        type="button"
+                        disabled={isRestartingServer || isUpdatingGithub}
+                        onClick={() => void handleRestartServer()}
+                        className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-amber-600 px-3 text-xs font-medium text-white hover:bg-amber-500 disabled:opacity-50"
+                      >
+                        <Power className="h-3.5 w-3.5" />
+                        <span>
+                          {isRestartingServer ? 'Đang khởi động lại...' : 'Restart Server ngay'}
+                        </span>
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => window.location.reload()}

@@ -3714,6 +3714,13 @@ async function startServer() {
     }
   });
 
+  // Catch unmatched /api routes so they never fall through to SPA HTML
+  app.use('/api', (_req, res) => {
+    res.status(404).json({
+      error: 'API không tồn tại. Nếu bạn vừa cập nhật mã nguồn, hãy Restart Server.',
+    });
+  });
+
   // API error handler
   app.use('/api', (err: unknown, req: Request, res: Response, _next: NextFunction) => {
     const reqWithDevice = req as Request & { trustedDeviceName?: string };
