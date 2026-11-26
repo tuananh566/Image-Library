@@ -91,6 +91,12 @@ const VAULT_FILE = path.join(DATA_DIR, 'vault.json');
 const TRUSTED_DEVICES_FILE = path.join(DATA_DIR, 'trusted-devices.json');
 const UPDATE_STATE_FILE = path.join(DATA_DIR, 'update-state.json');
 const PRE_UPDATE_BACKUP_DIR = path.join(DATA_DIR, 'pre-update-backups');
+const AUTO_BACKUP_FILE = path.join(DATA_DIR, 'auto-backup.json');
+const AUTO_BACKUP_META_FILE = path.join(DATA_DIR, 'auto-backup-meta.json');
+const AUTO_BACKUP_INTERVAL_MS = Math.max(
+  1000,
+  Number(process.env.AUTO_BACKUP_INTERVAL_MS) || 60 * 60 * 1000
+);
 const ACTIVITY_LOG_FILE = path.join(DATA_DIR, 'server-activity.log');
 const DEFAULT_GITHUB_REPO = process.env.GITHUB_REPO || 'tuananh566/Image-Library';
 const DEFAULT_GITHUB_BRANCH = process.env.GITHUB_BRANCH || 'main';
@@ -249,7 +255,9 @@ function withVaultLock<T>(task: (vault: VaultDataFile) => Promise<{ nextVault?: 
 
 const sseClients = new Set<Response>();
 
-function broadcastEvent(type: 'vault-updated' | 'devices-updated'): void {
+function broadcastEvent(
+  type: 'vault-updated' | 'devices-updated' | 'auto-backup-updated'
+): void {
   const payload = `data: ${JSON.stringify({ type, ts: Date.now() })}\n\n`;
   for (const res of sseClients) {
     try {
@@ -471,6 +479,18 @@ function describeApiActivity(
 
   if (p === '/api/vault/backup') {
     return { category: 'backup', action: 'Xuất tệp sao lưu JSON' };
+  }
+  if (p === '/api/vault/auto-backup/status') {
+    return { category: 'backup', action: '', skip: true };
+  }
+  if (p === '/api/vault/auto-backup/run') {
+    return { category: 'backup', action: 'Chụp bản sao lưu nội bộ ngay' };
+  }
+  if (p === '/api/vault/auto-backup/download') {
+    return { category: 'backup', action: 'Tải bản sao lưu nội bộ 1 giờ' };
+  }
+  if (p === '/api/vault/auto-backup/restore') {
+    return { category: 'backup', action: 'Khôi phục từ bản sao lưu nội bộ 1 giờ' };
   }
   if (p === '/api/vault/restore/begin') {
     return { category: 'backup', action: 'Bắt đầu khôi phục sao lưu' };
@@ -818,6 +838,848 @@ async function cleanupExpiredRestoreSessions(): Promise<void> {
       await fsp.rm(session.stagingDir, { recursive: true, force: true }).catch(() => {});
     }
   }
+}
+
+interface AutoBackupMeta {
+  savedAt: number;
+  sizeBytes: number;
+  imageCount: number;
+  categoryCount: number;
+  orderCount: number;
+  trigger: 'auto' | 'manual';
+}
+
+let isAutoBackingUp = false;
+let isAutoRestoring = false;
+let nextAutoBackupAt: number | null = null;
+let autoBackupTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function readAutoBackupMeta(): Promise<AutoBackupMeta | null> {
+  try {
+    if (!fs.existsSync(AUTO_BACKUP_FILE)) return null;
+    const stat = await fsp.stat(AUTO_BACKUP_FILE);
+    if (fs.existsSync(AUTO_BACKUP_META_FILE)) {
+      const raw = await fsp.readFile(AUTO_BACKUP_META_FILE, 'utf8');
+      const parsed = JSON.parse(raw) as Partial<AutoBackupMeta>;
+      if (typeof parsed.savedAt === 'number') {
+        return {
+          savedAt: parsed.savedAt,
+          sizeBytes: typeof parsed.sizeBytes === 'number' ? parsed.sizeBytes : stat.size,
+          imageCount: Number(parsed.imageCount) || 0,
+          categoryCount: Number(parsed.categoryCount) || 0,
+          orderCount: Number(parsed.orderCount) || 0,
+          trigger: parsed.trigger === 'manual' ? 'manual' : 'auto',
+        };
+      }
+    }
+    return {
+      savedAt: Math.floor(stat.mtimeMs) || Date.now(),
+      sizeBytes: stat.size,
+      imageCount: 0,
+      categoryCount: 0,
+      orderCount: 0,
+      trigger: 'auto',
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function getAutoBackupStatusPayload() {
+  const meta = await readAutoBackupMeta();
+  return {
+    exists: Boolean(meta),
+    savedAt: meta?.savedAt ?? null,
+    nextBackupAt: nextAutoBackupAt,
+    intervalMs: AUTO_BACKUP_INTERVAL_MS,
+    sizeBytes: meta?.sizeBytes ?? 0,
+    imageCount: meta?.imageCount ?? 0,
+    categoryCount: meta?.categoryCount ?? 0,
+    orderCount: meta?.orderCount ?? 0,
+    trigger: meta?.trigger ?? null,
+    isBackingUp: isAutoBackingUp,
+    isRestoring: isAutoRestoring,
+  };
+}
+
+async function writeWritableChunk(stream: fs.WriteStream, chunk: string): Promise<void> {
+  if (!stream.write(chunk, 'utf8')) {
+    await new Promise<void>((resolve, reject) => {
+      const onDrain = () => {
+        cleanup();
+        resolve();
+      };
+      const onError = (err: Error) => {
+        cleanup();
+        reject(err);
+      };
+      const cleanup = () => {
+        stream.off('drain', onDrain);
+        stream.off('error', onError);
+      };
+      stream.once('drain', onDrain);
+      stream.once('error', onError);
+    });
+  }
+}
+
+async function runInternalAutoBackup(trigger: 'auto' | 'manual'): Promise<AutoBackupMeta> {
+  if (isAutoBackingUp) {
+    const existing = await readAutoBackupMeta();
+    if (existing) return existing;
+    throw new Error('Đang có tiến trình sao lưu nội bộ khác đang chạy.');
+  }
+
+  isAutoBackingUp = true;
+  const tmpBackupFile = path.join(DATA_DIR, `auto-backup.tmp-${crypto.randomUUID()}.json`);
+  const tmpMetaFile = path.join(DATA_DIR, `auto-backup-meta.tmp-${crypto.randomUUID()}.json`);
+
+  try {
+    await ensureStorageReady();
+    const vault = await readVaultFile();
+    const categories = [...vault.categories];
+    const images = [...vault.images];
+    const orders = [...(vault.orders || [])];
+    const savedAt = Date.now();
+
+    const ws = fs.createWriteStream(tmpBackupFile, { encoding: 'utf8' });
+    const streamFinished = new Promise<void>((resolve, reject) => {
+      ws.once('finish', resolve);
+      ws.once('error', reject);
+    });
+
+    await writeWritableChunk(
+      ws,
+      `{"version":1,"exportedAt":${savedAt},"categories":${JSON.stringify(categories)},"orders":[`
+    );
+
+    let wroteFirstOrder = false;
+    for (const order of orders) {
+      const serializedSamples = [];
+      for (const sample of order.sampleImages || []) {
+        if (sample.storedFile) {
+          const orderImgPath = resolveSafeChild(ORDER_IMAGES_DIR, sample.storedFile);
+          if (orderImgPath && fs.existsSync(orderImgPath)) {
+            const buf = await fsp.readFile(orderImgPath);
+            const mime = sample.mimeType || 'image/jpeg';
+            serializedSamples.push({
+              id: sample.id,
+              sourceImageId: null,
+              title: sample.title,
+              mimeType: mime,
+              dataUrl: `data:${mime};base64,${buf.toString('base64')}`,
+            });
+          }
+        } else {
+          serializedSamples.push({
+            id: sample.id,
+            sourceImageId: sample.sourceImageId || sample.id,
+            title: sample.title,
+          });
+        }
+      }
+      const serializedOrder = {
+        ...order,
+        sampleImages: serializedSamples,
+      };
+      const prefix = wroteFirstOrder ? ',' : '';
+      wroteFirstOrder = true;
+      await writeWritableChunk(ws, `${prefix}${JSON.stringify(serializedOrder)}`);
+    }
+
+    await writeWritableChunk(ws, '],"images":[');
+
+    let wroteFirstImage = false;
+    let exportedImageCount = 0;
+    for (const img of images) {
+      const origPath = resolveSafeChild(UPLOADS_DIR, img.storedFile);
+      if (!origPath || !fs.existsSync(origPath)) continue;
+      const buf = await fsp.readFile(origPath);
+      const mime = img.mimeType || 'image/jpeg';
+      const { storedFile: _sf, storedThumbFile: _stf, ...meta } = img;
+      const payload = JSON.stringify({
+        ...meta,
+        dataUrl: `data:${mime};base64,${buf.toString('base64')}`,
+      });
+      const prefix = wroteFirstImage ? ',' : '';
+      wroteFirstImage = true;
+      exportedImageCount++;
+      await writeWritableChunk(ws, `${prefix}${payload}`);
+    }
+
+    await writeWritableChunk(ws, ']}');
+    ws.end();
+    await streamFinished;
+
+    await moveFileOrCopy(tmpBackupFile, AUTO_BACKUP_FILE);
+    const stat = await fsp.stat(AUTO_BACKUP_FILE);
+    const meta: AutoBackupMeta = {
+      savedAt,
+      sizeBytes: stat.size,
+      imageCount: exportedImageCount,
+      categoryCount: categories.length,
+      orderCount: orders.length,
+      trigger,
+    };
+
+    await fsp.writeFile(tmpMetaFile, JSON.stringify(meta, null, 2), 'utf8');
+    await moveFileOrCopy(tmpMetaFile, AUTO_BACKUP_META_FILE);
+
+    recordActivityLog({
+      level: 'info',
+      category: 'backup',
+      action:
+        trigger === 'auto'
+          ? 'Tự động lưu bản sao lưu JSON nội bộ (mỗi 1 giờ)'
+          : 'Đã cập nhật bản sao lưu JSON nội bộ server',
+      detail: `${meta.imageCount} ảnh · ${meta.categoryCount} danh mục · ${meta.orderCount} đơn hàng · ${(meta.sizeBytes / (1024 * 1024)).toFixed(2)} MB`,
+    });
+    broadcastEvent('auto-backup-updated');
+    return meta;
+  } catch (err) {
+    await fsp.rm(tmpBackupFile, { force: true }).catch(() => {});
+    await fsp.rm(tmpMetaFile, { force: true }).catch(() => {});
+    throw err;
+  } finally {
+    isAutoBackingUp = false;
+  }
+}
+
+interface ParsedNodeBackupImageInput extends Partial<Omit<ServerImageRecord, 'storedFile' | 'storedThumbFile'>> {
+  dataUrl?: string;
+}
+
+interface ParsedNodeOrderInput extends Partial<Omit<ServerOrderRecord, 'sampleImages'>> {
+  sampleImages?: Array<{
+    id?: string;
+    sourceImageId?: string | null;
+    title?: string;
+    mimeType?: string;
+    dataUrl?: string;
+  }>;
+}
+
+async function parseBackupJsonFileStreaming(
+  filePath: string,
+  onImage: (image: ParsedNodeBackupImageInput, countSoFar: number) => Promise<void>
+): Promise<{
+  exportedAt?: number;
+  categories: CategoryRecord[];
+  orders?: ParsedNodeOrderInput[];
+}> {
+  type State =
+    | 'INIT'
+    | 'EXPECT_ROOT_KEY_OR_END'
+    | 'EXPECT_COLON'
+    | 'EXPECT_VALUE_START'
+    | 'READ_KEY'
+    | 'READ_VALUE'
+    | 'IN_IMAGES_ARRAY'
+    | 'READ_IMAGE_ITEM'
+    | 'DONE';
+
+  const isWs = (code: number) => code === 32 || code === 9 || code === 10 || code === 13;
+
+  let exportedAt: number | undefined;
+  let categories: CategoryRecord[] = [];
+  let orders: ParsedNodeOrderInput[] | undefined;
+  let foundImagesArray = false;
+  let imageCount = 0;
+
+  const ctx: { state: State } = { state: 'INIT' };
+  let currentKey = '';
+  let chunks: string[] = [];
+  let inString = false;
+  let escaped = false;
+  let valueDepth = 0;
+  let valueKind: 'container' | 'string' | 'primitive' = 'primitive';
+  let readingImageNonObject = false;
+
+  const flushChunks = (): string => {
+    const joined = chunks.length === 1 ? chunks[0] : chunks.join('');
+    chunks = [];
+    return joined;
+  };
+
+  const scanStringEnd = (text: string, startPos: number): number => {
+    let pos = startPos;
+    const len = text.length;
+    while (pos < len) {
+      if (escaped) {
+        escaped = false;
+        pos++;
+        continue;
+      }
+      const nextQuote = text.indexOf('"', pos);
+      const nextSlash = text.indexOf('\\', pos);
+      if (nextQuote === -1 && nextSlash === -1) return len;
+      if (nextQuote !== -1 && (nextSlash === -1 || nextQuote < nextSlash)) {
+        inString = false;
+        return nextQuote + 1;
+      }
+      escaped = true;
+      pos = nextSlash + 1;
+    }
+    return len;
+  };
+
+  const assignTopLevelKey = (key: string, rawValue: string) => {
+    const parsed = JSON.parse(rawValue) as unknown;
+    if (key === 'exportedAt' && typeof parsed === 'number') {
+      exportedAt = parsed;
+    } else if (key === 'categories') {
+      if (parsed === null || parsed === undefined) {
+        categories = [];
+      } else if (Array.isArray(parsed)) {
+        categories = parsed as CategoryRecord[];
+      } else {
+        throw new Error('Danh sách danh mục trong tệp sao lưu nội bộ không hợp lệ.');
+      }
+    } else if (key === 'orders') {
+      if (Array.isArray(parsed)) {
+        orders = parsed as ParsedNodeOrderInput[];
+      } else if (parsed === null) {
+        orders = [];
+      }
+    }
+  };
+
+  const processTextChunk = async (text: string) => {
+    let pos = 0;
+    const len = text.length;
+
+    while (pos < len) {
+      if (ctx.state === 'DONE') break;
+
+      if (ctx.state === 'INIT') {
+        while (pos < len) {
+          const code = text.charCodeAt(pos);
+          if (code === 0xfeff || isWs(code)) pos++;
+          else break;
+        }
+        if (pos >= len) break;
+        if (text.charCodeAt(pos) !== 123) {
+          throw new Error('Tệp sao lưu nội bộ không phải đối tượng JSON hợp lệ.');
+        }
+        pos++;
+        ctx.state = 'EXPECT_ROOT_KEY_OR_END';
+        continue;
+      }
+
+      if (ctx.state === 'EXPECT_ROOT_KEY_OR_END') {
+        while (pos < len && (isWs(text.charCodeAt(pos)) || text.charCodeAt(pos) === 44)) {
+          pos++;
+        }
+        if (pos >= len) break;
+        const ch = text.charCodeAt(pos);
+        if (ch === 125) {
+          pos++;
+          ctx.state = 'DONE';
+          continue;
+        }
+        if (ch !== 34) {
+          throw new Error('Cấu trúc khóa JSON cấp gốc không hợp lệ.');
+        }
+        chunks = ['"'];
+        inString = true;
+        escaped = false;
+        pos++;
+        ctx.state = 'READ_KEY';
+        continue;
+      }
+
+      if (ctx.state === 'READ_KEY') {
+        const startPos = pos;
+        pos = scanStringEnd(text, pos);
+        chunks.push(text.slice(startPos, pos));
+        if (!inString) {
+          currentKey = JSON.parse(flushChunks()) as string;
+          ctx.state = 'EXPECT_COLON';
+        }
+        continue;
+      }
+
+      if (ctx.state === 'EXPECT_COLON') {
+        while (pos < len && isWs(text.charCodeAt(pos))) pos++;
+        if (pos >= len) break;
+        if (text.charCodeAt(pos) !== 58) {
+          throw new Error(`Thiếu dấu ":" sau khóa "${currentKey}".`);
+        }
+        pos++;
+        ctx.state = 'EXPECT_VALUE_START';
+        continue;
+      }
+
+      if (ctx.state === 'EXPECT_VALUE_START') {
+        while (pos < len && isWs(text.charCodeAt(pos))) pos++;
+        if (pos >= len) break;
+        const ch = text.charCodeAt(pos);
+        if (currentKey === 'images' && ch === 91) {
+          foundImagesArray = true;
+          pos++;
+          ctx.state = 'IN_IMAGES_ARRAY';
+          continue;
+        }
+        chunks = [];
+        inString = false;
+        escaped = false;
+        if (ch === 123 || ch === 91) {
+          valueKind = 'container';
+          valueDepth = 0;
+        } else if (ch === 34) {
+          valueKind = 'string';
+          chunks.push('"');
+          inString = true;
+          pos++;
+        } else {
+          valueKind = 'primitive';
+        }
+        ctx.state = 'READ_VALUE';
+        continue;
+      }
+
+      if (ctx.state === 'READ_VALUE') {
+        if (valueKind === 'string') {
+          const startPos = pos;
+          pos = scanStringEnd(text, pos);
+          chunks.push(text.slice(startPos, pos));
+          if (!inString) {
+            assignTopLevelKey(currentKey, flushChunks());
+            ctx.state = 'EXPECT_ROOT_KEY_OR_END';
+          }
+          continue;
+        }
+        if (valueKind === 'primitive') {
+          const startPos = pos;
+          while (pos < len) {
+            const ch = text.charCodeAt(pos);
+            if (ch === 44 || ch === 125 || isWs(ch)) {
+              chunks.push(text.slice(startPos, pos));
+              assignTopLevelKey(currentKey, flushChunks());
+              ctx.state = 'EXPECT_ROOT_KEY_OR_END';
+              break;
+            }
+            pos++;
+          }
+          if (ctx.state === 'READ_VALUE') {
+            chunks.push(text.slice(startPos, pos));
+          }
+          continue;
+        }
+        const startPos = pos;
+        let completed = false;
+        while (pos < len) {
+          if (inString) {
+            pos = scanStringEnd(text, pos);
+            continue;
+          }
+          const ch = text.charCodeAt(pos);
+          if (ch === 34) {
+            inString = true;
+            escaped = false;
+            pos++;
+          } else if (ch === 123 || ch === 91) {
+            valueDepth++;
+            pos++;
+          } else if (ch === 125 || ch === 93) {
+            valueDepth--;
+            pos++;
+            if (valueDepth === 0) {
+              completed = true;
+              break;
+            }
+          } else {
+            pos++;
+          }
+        }
+        chunks.push(text.slice(startPos, pos));
+        if (completed) {
+          assignTopLevelKey(currentKey, flushChunks());
+          ctx.state = 'EXPECT_ROOT_KEY_OR_END';
+        }
+        continue;
+      }
+
+      if (ctx.state === 'IN_IMAGES_ARRAY') {
+        while (pos < len && (isWs(text.charCodeAt(pos)) || text.charCodeAt(pos) === 44)) {
+          pos++;
+        }
+        if (pos >= len) break;
+        const ch = text.charCodeAt(pos);
+        if (ch === 93) {
+          pos++;
+          ctx.state = 'EXPECT_ROOT_KEY_OR_END';
+          continue;
+        }
+        chunks = [];
+        inString = false;
+        escaped = false;
+        if (ch === 123) {
+          valueDepth = 0;
+          readingImageNonObject = false;
+          ctx.state = 'READ_IMAGE_ITEM';
+          continue;
+        }
+        valueDepth = ch === 91 ? 0 : 1;
+        readingImageNonObject = true;
+        ctx.state = 'READ_IMAGE_ITEM';
+        continue;
+      }
+
+      if (ctx.state === 'READ_IMAGE_ITEM') {
+        if (readingImageNonObject) {
+          while (pos < len) {
+            if (inString) {
+              pos = scanStringEnd(text, pos);
+              continue;
+            }
+            const ch = text.charCodeAt(pos);
+            if (ch === 34) {
+              inString = true;
+              escaped = false;
+              pos++;
+            } else if (ch === 44 || ch === 93) {
+              ctx.state = 'IN_IMAGES_ARRAY';
+              break;
+            } else {
+              pos++;
+            }
+          }
+          continue;
+        }
+
+        const startPos = pos;
+        let completed = false;
+        while (pos < len) {
+          if (inString) {
+            pos = scanStringEnd(text, pos);
+            continue;
+          }
+          const ch = text.charCodeAt(pos);
+          if (ch === 34) {
+            inString = true;
+            escaped = false;
+            pos++;
+          } else if (ch === 123 || ch === 91) {
+            valueDepth++;
+            pos++;
+          } else if (ch === 125 || ch === 93) {
+            valueDepth--;
+            pos++;
+            if (valueDepth === 0) {
+              completed = true;
+              break;
+            }
+          } else {
+            pos++;
+          }
+        }
+        chunks.push(text.slice(startPos, pos));
+        if (completed) {
+          const item = JSON.parse(flushChunks()) as ParsedNodeBackupImageInput;
+          imageCount++;
+          await onImage(item, imageCount);
+          ctx.state = 'IN_IMAGES_ARRAY';
+        }
+      }
+    }
+  };
+
+  const rs = fs.createReadStream(filePath, {
+    encoding: 'utf8',
+    highWaterMark: 1024 * 1024,
+  });
+  for await (const chunk of rs) {
+    if (typeof chunk === 'string' && chunk.length > 0) {
+      await processTextChunk(chunk);
+    }
+  }
+
+  const finalState: State = ctx.state;
+  if (!foundImagesArray || finalState !== 'DONE') {
+    throw new Error('Tệp sao lưu nội bộ bị cắt cụt hoặc sai cấu trúc JSON.');
+  }
+
+  return { exportedAt, categories, orders };
+}
+
+async function restoreFromInternalAutoBackup(): Promise<{
+  importedCategories: number;
+  importedImages: number;
+  importedOrders: number;
+  restoredFromSavedAt: number;
+}> {
+  if (isAutoBackingUp) {
+    throw new Error('Server đang tạo bản sao lưu tự động. Vui lòng thử lại sau vài giây.');
+  }
+  if (isAutoRestoring) {
+    throw new Error('Đang có tiến trình khôi phục từ bản sao lưu nội bộ.');
+  }
+  if (!fs.existsSync(AUTO_BACKUP_FILE)) {
+    throw new Error('Chưa có tệp sao lưu tự động nội bộ trên server.');
+  }
+
+  isAutoRestoring = true;
+  const stagingDir = path.join(RESTORE_STAGING_DIR, `auto-${crypto.randomUUID()}`);
+  const uploadsDir = path.join(stagingDir, 'uploads');
+  const thumbsDir = path.join(stagingDir, 'thumbs');
+  const orderImagesDir = path.join(stagingDir, 'order-images');
+
+  try {
+    await ensureStorageReady();
+    await Promise.all([
+      fsp.mkdir(uploadsDir, { recursive: true }),
+      fsp.mkdir(thumbsDir, { recursive: true }),
+      fsp.mkdir(orderImagesDir, { recursive: true }),
+    ]);
+
+    const stagedImages: ServerImageRecord[] = [];
+    const now = Date.now();
+
+    const parsedMeta = await parseBackupJsonFileStreaming(AUTO_BACKUP_FILE, async (item) => {
+      if (!item.dataUrl) return;
+      const decoded = base64DataUrlToBuffer(item.dataUrl);
+      if (!decoded) return;
+      const safeId = sanitizeId(String(item.id || '')) || crypto.randomUUID();
+      const mimeType = item.mimeType || decoded.mimeType || 'image/jpeg';
+      const ext = getFileExt(mimeType, item.fileName);
+      const storedFile = `${safeId}${ext}`;
+      const storedThumbFile = `${safeId}${ext}`;
+      const origPath = resolveSafeChild(uploadsDir, storedFile);
+      const thumbPath = resolveSafeChild(thumbsDir, storedThumbFile);
+      if (!origPath || !thumbPath) return;
+
+      await Promise.all([
+        fsp.writeFile(origPath, decoded.buffer),
+        fsp.writeFile(thumbPath, decoded.buffer),
+      ]);
+
+      stagedImages.push({
+        id: safeId,
+        title: String(item.title || 'Ảnh mẫu đã khôi phục'),
+        fileName: String(item.fileName || `restored${ext}`),
+        notes: String(item.notes || ''),
+        categoryId: item.categoryId ? String(item.categoryId) : null,
+        tags: Array.isArray(item.tags) ? item.tags.map(String) : [],
+        width: Number(item.width) || 800,
+        height: Number(item.height) || 600,
+        size: decoded.buffer.length,
+        mimeType,
+        aspectRatioType:
+          item.aspectRatioType === 'landscape' ||
+          item.aspectRatioType === 'portrait' ||
+          item.aspectRatioType === 'square'
+            ? item.aspectRatioType
+            : 'square',
+        dominantColors: Array.isArray(item.dominantColors) ? item.dominantColors.map(String) : [],
+        colorFamilies: Array.isArray(item.colorFamilies) ? item.colorFamilies.map(String) : [],
+        isFavorite: Boolean(item.isFavorite),
+        createdAt: Number(item.createdAt) || now,
+        updatedAt: Number(item.updatedAt) || now,
+        storedFile,
+        storedThumbFile,
+        thumbMimeType: mimeType,
+      });
+    });
+
+    const restoredCategories: CategoryRecord[] = parsedMeta.categories
+      .filter((cat) => cat && cat.id && cat.name)
+      .map((cat, idx) => ({
+        id: String(cat.id),
+        name: String(cat.name),
+        description: String(cat.description || ''),
+        color: String(cat.color || '#2563EB'),
+        order: Number.isFinite(cat.order) ? Number(cat.order) : idx,
+        createdAt: Number(cat.createdAt) || now,
+      }));
+
+    const restoredOrders: ServerOrderRecord[] = [];
+    for (const o of parsedMeta.orders || []) {
+      if (!o || !o.id || !o.customerName) continue;
+      const price = Math.max(0, Number(o.price) || 0);
+      const depositAmount = Math.max(0, Number(o.depositAmount) || 0);
+      const sampleImages: ServerOrderSampleImage[] = [];
+
+      for (const s of o.sampleImages || []) {
+        if (s.dataUrl) {
+          const decoded = base64DataUrlToBuffer(s.dataUrl);
+          if (decoded) {
+            const fileId = sanitizeId(String(s.id || '')) || crypto.randomUUID();
+            const mimeType = s.mimeType || decoded.mimeType || 'image/jpeg';
+            const ext = getFileExt(mimeType);
+            const storedFile = `${fileId}${ext}`;
+            const destStaging = resolveSafeChild(orderImagesDir, storedFile);
+            if (destStaging) {
+              await fsp.writeFile(destStaging, decoded.buffer);
+              sampleImages.push({
+                id: fileId,
+                sourceImageId: null,
+                title: String(s.title || 'Ảnh mẫu đơn hàng'),
+                storedFile,
+                mimeType,
+              });
+            }
+          }
+        } else {
+          sampleImages.push({
+            id: String(s.id || crypto.randomUUID()),
+            sourceImageId: s.sourceImageId ? String(s.sourceImageId) : null,
+            title: String(s.title || 'Ảnh mẫu'),
+          });
+        }
+      }
+
+      restoredOrders.push({
+        id: String(o.id),
+        orderCode: String(o.orderCode || `DH-${String(o.id).slice(0, 6)}`),
+        customerName: String(o.customerName || ''),
+        customerPhone: String(o.customerPhone || ''),
+        productName: String(o.productName || ''),
+        productDescription: String(o.productDescription || ''),
+        pickupTime: String(o.pickupTime || ''),
+        price,
+        depositAmount,
+        isPaid: Boolean(o.isPaid) || (price > 0 && depositAmount >= price),
+        isReady: Boolean(o.isReady),
+        isReceived: Boolean(o.isReceived),
+        sampleImages,
+        createdAt: Number(o.createdAt) || now,
+        updatedAt: Number(o.updatedAt) || now,
+      });
+    }
+
+    // Move staged binaries into live folders
+    for (const img of stagedImages) {
+      const srcOrig = resolveSafeChild(uploadsDir, img.storedFile);
+      const destOrig = resolveSafeChild(UPLOADS_DIR, img.storedFile);
+      if (srcOrig && destOrig && fs.existsSync(srcOrig)) {
+        await moveFileOrCopy(srcOrig, destOrig);
+      }
+      const srcThumb = resolveSafeChild(thumbsDir, img.storedThumbFile);
+      const destThumb = resolveSafeChild(THUMBS_DIR, img.storedThumbFile);
+      if (srcThumb && destThumb && fs.existsSync(srcThumb)) {
+        await moveFileOrCopy(srcThumb, destThumb);
+      }
+    }
+    for (const o of restoredOrders) {
+      for (const s of o.sampleImages) {
+        if (!s.storedFile) continue;
+        const srcOrderImg = resolveSafeChild(orderImagesDir, s.storedFile);
+        const destOrderImg = resolveSafeChild(ORDER_IMAGES_DIR, s.storedFile);
+        if (srcOrderImg && destOrderImg && fs.existsSync(srcOrderImg)) {
+          await moveFileOrCopy(srcOrderImg, destOrderImg);
+        }
+      }
+    }
+
+    const cleanupResult = await withVaultLock(async (vault) => {
+      const keptStoredFiles = new Set(stagedImages.map((i) => i.storedFile));
+      const keptThumbFiles = new Set(stagedImages.map((i) => i.storedThumbFile));
+      const oldOrphanImages = vault.images.filter(
+        (oldImg) =>
+          !keptStoredFiles.has(oldImg.storedFile) ||
+          !keptThumbFiles.has(oldImg.storedThumbFile)
+      );
+
+      const keptOrderFiles = new Set(
+        restoredOrders.flatMap((o) =>
+          o.sampleImages.map((s) => s.storedFile).filter(Boolean) as string[]
+        )
+      );
+      const oldOrphanOrderFiles = (vault.orders || [])
+        .flatMap((o) =>
+          (o.sampleImages || []).map((s) => s.storedFile).filter(Boolean) as string[]
+        )
+        .filter((fileName) => !keptOrderFiles.has(fileName));
+
+      return {
+        nextVault: {
+          version: 1,
+          seeded: true,
+          categories: restoredCategories,
+          images: stagedImages,
+          orders: restoredOrders,
+        },
+        result: {
+          oldOrphanImages,
+          oldOrphanOrderFiles,
+          keptStoredFiles,
+          keptThumbFiles,
+        },
+      };
+    });
+
+    await Promise.all([
+      ...cleanupResult.oldOrphanImages.flatMap((img) => {
+        const ops: Array<Promise<void>> = [];
+        if (!cleanupResult.keptStoredFiles.has(img.storedFile)) {
+          const orig = resolveSafeChild(UPLOADS_DIR, img.storedFile);
+          if (orig) ops.push(fsp.unlink(orig).catch(() => {}));
+        }
+        if (!cleanupResult.keptThumbFiles.has(img.storedThumbFile)) {
+          const thumb = resolveSafeChild(THUMBS_DIR, img.storedThumbFile);
+          if (thumb) ops.push(fsp.unlink(thumb).catch(() => {}));
+        }
+        return ops;
+      }),
+      ...cleanupResult.oldOrphanOrderFiles.map((fileName) => {
+        const p = resolveSafeChild(ORDER_IMAGES_DIR, fileName);
+        return p ? fsp.unlink(p).catch(() => {}) : Promise.resolve();
+      }),
+    ]);
+
+    const meta = await readAutoBackupMeta();
+    const restoredFromSavedAt = parsedMeta.exportedAt || meta?.savedAt || now;
+    broadcastVaultUpdated();
+    return {
+      importedCategories: restoredCategories.length,
+      importedImages: stagedImages.length,
+      importedOrders: restoredOrders.length,
+      restoredFromSavedAt,
+    };
+  } finally {
+    isAutoRestoring = false;
+    await fsp.rm(stagingDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+function startHourlyAutoBackupScheduler(): void {
+  const scheduleNext = (delayMs: number) => {
+    if (autoBackupTimer) {
+      clearTimeout(autoBackupTimer);
+    }
+    const safeDelay = Math.max(1000, delayMs);
+    nextAutoBackupAt = Date.now() + safeDelay;
+    autoBackupTimer = setTimeout(() => {
+      void (async () => {
+        try {
+          await runInternalAutoBackup('auto');
+        } catch (err) {
+          recordActivityLog({
+            level: 'error',
+            category: 'backup',
+            action: 'Lỗi tự động sao lưu nội bộ (1 giờ)',
+            detail: err instanceof Error ? err.message : String(err),
+          });
+        } finally {
+          if (autoBackupTimer !== null) {
+            scheduleNext(AUTO_BACKUP_INTERVAL_MS);
+          }
+        }
+      })();
+    }, safeDelay);
+    autoBackupTimer.unref?.();
+  };
+
+  void (async () => {
+    const meta = await readAutoBackupMeta();
+    const elapsed = meta ? Date.now() - meta.savedAt : Infinity;
+    if (!meta || elapsed >= AUTO_BACKUP_INTERVAL_MS) {
+      scheduleNext(5000);
+    } else {
+      scheduleNext(AUTO_BACKUP_INTERVAL_MS - elapsed);
+    }
+  })();
 }
 
 interface UpdateStateRecord {
@@ -1925,6 +2787,10 @@ async function startServer() {
 
     const performRestart = async () => {
       try {
+        if (autoBackupTimer) {
+          clearTimeout(autoBackupTimer);
+          autoBackupTimer = null;
+        }
         await Promise.allSettled([writeQueue, devicesWriteQueue, activityLogWriteQueue]);
 
         for (const client of sseClients) {
@@ -3692,6 +4558,70 @@ async function startServer() {
     }
   });
 
+  // Internal 1-hour server JSON auto-backup status, manual trigger, download, and 1-click replace restore
+  app.get('/api/vault/auto-backup/status', async (_req, res, next) => {
+    try {
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(await getAutoBackupStatusPayload());
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.post('/api/vault/auto-backup/run', async (_req, res, next) => {
+    try {
+      const meta = await runInternalAutoBackup('manual');
+      res.json({
+        ok: true,
+        meta,
+        status: await getAutoBackupStatusPayload(),
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.get('/api/vault/auto-backup/download', (_req, res, next) => {
+    try {
+      if (!fs.existsSync(AUTO_BACKUP_FILE)) {
+        res.status(404).json({ error: 'Chưa có tệp sao lưu tự động nội bộ trên server.' });
+        return;
+      }
+      const dateStr = new Date().toISOString().slice(0, 10);
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="mai-huong-auto-backup-${dateStr}.json"`
+      );
+      const rs = fs.createReadStream(AUTO_BACKUP_FILE);
+      rs.on('error', (err) => {
+        if (!res.headersSent) next(err);
+        else res.destroy();
+      });
+      rs.pipe(res);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.post('/api/vault/auto-backup/restore', async (_req, res, next) => {
+    try {
+      const result = await restoreFromInternalAutoBackup();
+      res.json({
+        ok: true,
+        ...result,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Khôi phục thất bại.';
+      if (msg.includes('Chưa có tệp sao lưu')) {
+        res.status(404).json({ error: msg });
+        return;
+      }
+      next(err);
+    }
+  });
+
   // Clear all server vault data
   app.delete('/api/vault', async (_req, res, next) => {
     try {
@@ -3946,6 +4876,10 @@ async function startServer() {
   const handleShutdownSignal = (signal: string) => {
     if (isShuttingDown) return;
     isShuttingDown = true;
+    if (autoBackupTimer) {
+      clearTimeout(autoBackupTimer);
+      autoBackupTimer = null;
+    }
     cleanupPortLockFile();
     for (const client of sseClients) {
       try {
@@ -3987,6 +4921,7 @@ async function startServer() {
   process.once('SIGINT', () => handleShutdownSignal('SIGINT'));
   process.once('exit', cleanupPortLockFile);
 
+  startHourlyAutoBackupScheduler();
   console.log(`Server listening on http://localhost:${PORT}`);
   void readVaultFile().then((vault) => {
     recordActivityLog({

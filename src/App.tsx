@@ -47,6 +47,7 @@ import {
   getPendingLocalSyncCount,
   importServerBackupFile,
   reorderServerCategories,
+  restoreFromAutoBackup,
   saveFullServerOrder,
   saveServerCategory,
   seedServerSampleVault,
@@ -1288,6 +1289,13 @@ export default function App() {
         stats={stats}
         onExportBackup={handleExportBackup}
         onImportBackup={handleImportBackup}
+        onRestoreAutoBackup={async () => {
+          if (!isAdmin) throw new Error('Admin permission required');
+          const res = await restoreFromAutoBackup();
+          clearAllFilters();
+          await reloadVault();
+          return res;
+        }}
         onRestoreSampleVault={async () => {
           if (!isAdmin) return;
           await seedServerSampleVault(true);

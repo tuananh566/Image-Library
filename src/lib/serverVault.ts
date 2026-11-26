@@ -991,3 +991,56 @@ export async function clearServerActivityLogs(): Promise<void> {
     headers: { 'X-Super-Admin': 'tuananh' },
   });
 }
+
+export interface AutoBackupStatusResponse {
+  exists: boolean;
+  savedAt: number | null;
+  nextBackupAt: number | null;
+  intervalMs: number;
+  sizeBytes: number;
+  imageCount: number;
+  categoryCount: number;
+  orderCount: number;
+  trigger: 'auto' | 'manual' | null;
+  isBackingUp: boolean;
+  isRestoring: boolean;
+}
+
+export interface AutoBackupRestoreResult {
+  ok: boolean;
+  importedCategories: number;
+  importedImages: number;
+  importedOrders: number;
+  restoredFromSavedAt: number;
+}
+
+export async function fetchAutoBackupStatus(): Promise<AutoBackupStatusResponse> {
+  const res = await apiFetch('/api/vault/auto-backup/status', {
+    cache: 'no-store',
+  });
+  return parseJsonResponse<AutoBackupStatusResponse>(res);
+}
+
+export async function runAutoBackupNow(): Promise<{
+  ok: boolean;
+  status: AutoBackupStatusResponse;
+}> {
+  const res = await apiFetch('/api/vault/auto-backup/run', {
+    method: 'POST',
+  });
+  return parseJsonResponse(res);
+}
+
+export async function downloadAutoBackupBlob(): Promise<Blob> {
+  const res = await apiFetch('/api/vault/auto-backup/download', {
+    cache: 'no-store',
+  });
+  return res.blob();
+}
+
+export async function restoreFromAutoBackup(): Promise<AutoBackupRestoreResult> {
+  const res = await apiFetch('/api/vault/auto-backup/restore', {
+    method: 'POST',
+  });
+  return parseJsonResponse<AutoBackupRestoreResult>(res);
+}
