@@ -1,10 +1,11 @@
 import 'dotenv/config';
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import crypto from 'crypto';
 import express from 'express';
 import type { NextFunction, Request, Response } from 'express';
 import fs from 'fs';
 import fsp from 'fs/promises';
+import type http from 'http';
 import multer from 'multer';
 import os from 'os';
 import path from 'path';
@@ -517,6 +518,7 @@ interface GithubCommitInfo {
 }
 
 let isGithubUpdating = false;
+let isRestartingServer = false;
 
 function isValidGithubRepo(repo: string): boolean {
   return /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/.test(repo);
@@ -899,6 +901,8 @@ async function startServer() {
   await readTrustedDevicesFile();
 
   const app = express();
+  let httpServer: http.Server | null = null;
+  let viteServer: Awaited<ReturnType<typeof createViteServer>> | null = null;
   const upload = multer({
     storage: multer.memoryStorage(),
     limits: {
@@ -1436,6 +1440,91 @@ async function startServer() {
     } finally {
       isGithubUpdating = false;
     }
+  });
+
+  // Gracefully flush pending writes, close listeners, and restart the Node server process
+  app.post('/api/system/restart', (_req, res) => {
+    if (isGithubUpdating) {
+      res.status(409).json({
+        error: 'Hệ thống đang cập nhật từ GitHub. Vui lòng đợi hoàn tất trước khi khởi động lại.',
+      });
+      return;
+    }
+    if (isRestartingServer) {
+      res.status(409).json({
+        error: 'Server đang trong quá trình khởi động lại.',
+      });
+      return;
+    }
+
+    isRestartingServer = true;
+    const hasProcessManager = Boolean(
+      process.env.pm_id !== undefined ||
+        process.env.PM2_HOME ||
+        process.env.INVOCATION_ID ||
+        process.env.SUPERVISOR_ENABLED ||
+        fs.existsSync('/.dockerenv')
+    );
+
+    res.json({
+      ok: true,
+      mode: hasProcessManager ? 'supervisor' : 'self-respawn',
+    });
+
+    const performRestart = async () => {
+      try {
+        await Promise.allSettled([writeQueue, devicesWriteQueue]);
+
+        for (const client of sseClients) {
+          try {
+            client.end();
+          } catch {
+            // Ignore closed SSE client
+          }
+        }
+        sseClients.clear();
+
+        if (viteServer) {
+          await viteServer.close().catch(() => {});
+        }
+
+        if (httpServer) {
+          await new Promise<void>((resolve) => {
+            const safetyTimer = setTimeout(resolve, 1500);
+            httpServer!.close(() => {
+              clearTimeout(safetyTimer);
+              resolve();
+            });
+            httpServer!.closeAllConnections?.();
+          });
+        }
+
+        if (!hasProcessManager) {
+          const filteredExecArgv = process.execArgv.filter(
+            (arg) => !arg.startsWith('--inspect') && !arg.startsWith('--eval')
+          );
+          const child = spawn(
+            process.execPath,
+            [...filteredExecArgv, ...process.argv.slice(1)],
+            {
+              cwd: process.cwd(),
+              detached: true,
+              stdio: 'inherit',
+              env: process.env,
+            }
+          );
+          child.unref();
+        }
+      } catch (err) {
+        console.error('Error during graceful server restart:', err);
+      } finally {
+        process.exit(0);
+      }
+    };
+
+    setTimeout(() => {
+      void performRestart();
+    }, 150);
   });
 
   // Server-Sent Events for live cross-device updates
@@ -2676,14 +2765,14 @@ async function startServer() {
       res.sendFile(path.join(distDir, 'index.html'));
     });
   } else {
-    const vite = await createViteServer({
+    viteServer = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });
-    app.use(vite.middlewares);
+    app.use(viteServer.middlewares);
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  httpServer = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server listening on http://localhost:${PORT}`);
     const nets = os.networkInterfaces();
     for (const ifaceList of Object.values(nets)) {

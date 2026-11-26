@@ -575,3 +575,37 @@ export async function triggerGithubUpdate(
   });
   return res.json();
 }
+
+export async function restartServer(): Promise<{
+  ok: boolean;
+  mode: 'supervisor' | 'self-respawn';
+}> {
+  const res = await apiFetch('/api/system/restart', {
+    method: 'POST',
+  });
+  return res.json();
+}
+
+export async function waitForServerHealthy(timeoutMs = 25000): Promise<boolean> {
+  await new Promise((r) => setTimeout(r, 900));
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), 2000);
+      const res = await fetch('/api/health', {
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      window.clearTimeout(timer);
+      if (res.ok) {
+        const data = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+        if (data?.ok) return true;
+      }
+    } catch {
+      // Server still restarting
+    }
+    await new Promise((r) => setTimeout(r, 750));
+  }
+  return false;
+}

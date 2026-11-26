@@ -9,6 +9,7 @@ import {
   Laptop,
   Lock,
   Pencil,
+  Power,
   RefreshCw,
   RotateCw,
   Settings,
@@ -28,8 +29,10 @@ import {
 } from '../lib/deviceAuth';
 import {
   fetchGithubUpdateStatus,
+  restartServer,
   saveGithubConfig,
   triggerGithubUpdate,
+  waitForServerHealthy,
   type GithubUpdateResult,
   type GithubUpdateStatusResponse,
 } from '../lib/serverVault';
@@ -103,6 +106,12 @@ export function SettingsModal({
   const [isUpdatingGithub, setIsUpdatingGithub] = useState(false);
   const [githubResult, setGithubResult] = useState<GithubUpdateResult | null>(null);
   const [githubError, setGithubError] = useState<string | null>(null);
+  const [confirmRestartServer, setConfirmRestartServer] = useState(false);
+  const [isRestartingServer, setIsRestartingServer] = useState(false);
+  const [restartNotice, setRestartNotice] = useState<{
+    type: 'success' | 'warning' | 'error';
+    message: string;
+  } | null>(null);
 
   const loadDevices = useCallback(async () => {
     setDevicesLoading(true);
@@ -209,6 +218,40 @@ export function SettingsModal({
     }
   };
 
+  const handleRestartServer = async () => {
+    if (isRestartingServer || isUpdatingGithub) return;
+    setConfirmRestartServer(false);
+    setIsRestartingServer(true);
+    setRestartNotice(null);
+    try {
+      await restartServer();
+      const healthy = await waitForServerHealthy(25_000);
+      if (healthy) {
+        setRestartNotice({
+          type: 'success',
+          message: 'Server đã khởi động lại thành công và sẵn sàng hoạt động.',
+        });
+        await Promise.all([loadGithubStatus(), loadDevices()]);
+      } else {
+        setRestartNotice({
+          type: 'warning',
+          message:
+            'Đã gửi lệnh khởi động lại nhưng chưa thấy server phản hồi lại. Hãy kiểm tra tiến trình trên máy chủ nếu server chưa tự khởi động.',
+        });
+      }
+    } catch (err) {
+      setRestartNotice({
+        type: 'error',
+        message:
+          err instanceof Error
+            ? err.message
+            : 'Không thể khởi động lại server. Vui lòng thử lại.',
+      });
+    } finally {
+      setIsRestartingServer(false);
+    }
+  };
+
   useEffect(() => {
     if (!isOpen) return;
     setAdminPassword('');
@@ -216,6 +259,8 @@ export function SettingsModal({
     setAuthError(null);
     setNowMs(Date.now());
     setGithubError(null);
+    setConfirmRestartServer(false);
+    setRestartNotice(null);
     setIsDevicesModalOpen(false);
     setEditingDeviceId(null);
     if (isAdmin) {
@@ -777,7 +822,7 @@ export function SettingsModal({
               <div className="mt-4 flex flex-wrap items-center gap-2.5">
                 <button
                   type="button"
-                  disabled={isCheckingGithub || isUpdatingGithub}
+                  disabled={isCheckingGithub || isUpdatingGithub || isRestartingServer}
                   onClick={() =>
                     void loadGithubStatus(
                       githubRepoInput.trim() || undefined,
@@ -794,7 +839,7 @@ export function SettingsModal({
 
                 <button
                   type="button"
-                  disabled={isUpdatingGithub || isCheckingGithub}
+                  disabled={isUpdatingGithub || isCheckingGithub || isRestartingServer}
                   onClick={() => void handleRunGithubUpdate()}
                   className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-4 text-xs font-semibold text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
                 >
@@ -806,6 +851,97 @@ export function SettingsModal({
                   </span>
                 </button>
               </div>
+            </section>
+          )}
+
+          {/* Server Restart Section (Admin only) */}
+          {isAdmin && (
+            <section className="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="font-display text-base font-semibold text-zinc-950 dark:text-zinc-50">
+                    Khởi động lại Server
+                  </h2>
+                  <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                    Khởi động lại tiến trình Node.js để áp dụng thay đổi backend hoặc làm mới kết nối server. Dữ liệu ảnh, danh mục và đơn hàng vẫn được giữ nguyên.
+                  </p>
+                </div>
+
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  {confirmRestartServer && !isRestartingServer ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmRestartServer(false)}
+                        className="inline-flex h-9 items-center rounded-lg border border-zinc-300 px-3 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                      >
+                        Hủy
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isUpdatingGithub}
+                        onClick={() => void handleRestartServer()}
+                        className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-amber-600 px-3.5 text-xs font-semibold text-white transition-colors hover:bg-amber-500 disabled:opacity-50"
+                      >
+                        <Power className="h-3.5 w-3.5" />
+                        <span>Xác nhận Restart</span>
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={isRestartingServer || isUpdatingGithub}
+                      onClick={() => {
+                        setRestartNotice(null);
+                        setConfirmRestartServer(true);
+                      }}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-amber-800/70 bg-amber-950/30 px-3.5 text-xs font-semibold text-amber-300 transition-colors hover:bg-amber-950/60 disabled:opacity-50"
+                    >
+                      <RotateCw
+                        className={`h-3.5 w-3.5 ${isRestartingServer ? 'animate-spin' : ''}`}
+                      />
+                      <span>
+                        {isRestartingServer ? 'Đang khởi động lại server...' : 'Restart Server'}
+                      </span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {restartNotice && (
+                <div
+                  className={`mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3.5 py-2.5 text-xs ${
+                    restartNotice.type === 'success'
+                      ? 'border-emerald-900/70 bg-emerald-950/40 text-emerald-200'
+                      : restartNotice.type === 'warning'
+                        ? 'border-amber-900/70 bg-amber-950/40 text-amber-200'
+                        : 'border-rose-900/70 bg-rose-950/40 text-rose-200'
+                  }`}
+                >
+                  <div className="flex items-start gap-2">
+                    {restartNotice.type === 'success' ? (
+                      <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+                    ) : (
+                      <AlertCircle
+                        className={`mt-0.5 h-4 w-4 shrink-0 ${
+                          restartNotice.type === 'warning' ? 'text-amber-400' : 'text-rose-400'
+                        }`}
+                      />
+                    )}
+                    <span>{restartNotice.message}</span>
+                  </div>
+                  {restartNotice.type === 'success' && (
+                    <button
+                      type="button"
+                      onClick={() => window.location.reload()}
+                      className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md bg-emerald-600 px-2.5 text-xs font-medium text-white hover:bg-emerald-500"
+                    >
+                      <RotateCw className="h-3 w-3" />
+                      <span>Tải lại trang</span>
+                    </button>
+                  )}
+                </div>
+              )}
             </section>
           )}
 
