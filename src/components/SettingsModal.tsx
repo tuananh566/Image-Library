@@ -60,7 +60,6 @@ type SettingsSectionId =
   | 'devices'
   | 'backup'
   | 'github'
-  | 'server-restart'
   | 'server-logs';
 
 interface SettingsModalProps {
@@ -94,7 +93,6 @@ interface MenuItemConfig {
   group: 'account' | 'storage' | 'system';
   title: string;
   subtitle: string;
-  keywords: string;
   valueText?: string;
   valueTone?: 'default' | 'success' | 'warning' | 'muted';
   iconBgClass: string;
@@ -121,7 +119,6 @@ export function SettingsModal({
   onSyncLocalToServer,
 }: SettingsModalProps) {
   const [activeSection, setActiveSection] = useState<SettingsSectionId>('root');
-  const [settingsSearch, setSettingsSearch] = useState('');
 
   const [adminPassword, setAdminPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -343,7 +340,6 @@ export function SettingsModal({
   useEffect(() => {
     if (!isOpen) return;
     setActiveSection('root');
-    setSettingsSearch('');
     setAdminPassword('');
     setShowPassword(false);
     setAuthError(null);
@@ -482,7 +478,6 @@ export function SettingsModal({
         group: 'account',
         title: 'Thiết bị quen thuộc',
         subtitle: 'Quản lý tên thiết bị hiện tại và danh sách tin cậy',
-        keywords: 'thiết bị quen thuộc tin cậy đổi tên thu hồi quên',
         valueText:
           trustedDevices.length > 0
             ? `${trustedDevices.length} thiết bị`
@@ -498,7 +493,6 @@ export function SettingsModal({
         group: 'storage',
         title: 'Lưu trữ Server & Sao lưu',
         subtitle: 'Xuất nhập JSON, bản sao lưu tự động 1 giờ và dữ liệu mẫu',
-        keywords: 'sao lưu backup json lưu trữ khôi phục đồng bộ xóa dữ liệu tự động 1 giờ',
         valueText: isAdmin
           ? `${stats.imageCount} ảnh · ${formatFileSize(stats.totalBytes)}`
           : 'Cần Admin',
@@ -511,7 +505,6 @@ export function SettingsModal({
         group: 'system',
         title: 'Cập nhật từ GitHub',
         subtitle: 'Kiểm tra phiên bản mới và kéo mã nguồn an toàn',
-        keywords: 'github update repo branch token commit cập nhật phiên bản',
         valueText: !isAdmin
           ? 'Cần Admin'
           : githubStatus?.hasUpdate
@@ -528,30 +521,10 @@ export function SettingsModal({
         icon: <GitBranch className="h-4 w-4" />,
       },
       {
-        id: 'server-restart',
-        group: 'system',
-        title: 'Khởi động lại Server',
-        subtitle: 'Làm mới tiến trình Node.js để áp dụng thay đổi backend',
-        keywords: 'restart server khởi động lại tiến trình backend',
-        valueText: !isAdmin
-          ? 'Cần Admin'
-          : githubStatus?.serverPendingRestart
-            ? 'Nên restart'
-            : 'Sẵn sàng',
-        valueTone: !isAdmin
-          ? 'muted'
-          : githubStatus?.serverPendingRestart
-            ? 'warning'
-            : 'default',
-        iconBgClass: 'bg-amber-500 text-white',
-        icon: <Power className="h-4 w-4" />,
-      },
-      {
         id: 'server-logs',
         group: 'system',
         title: 'Nhật ký hoạt động Server',
         subtitle: 'Theo dõi log thời gian thực mọi thao tác và lỗi server',
-        keywords: 'log nhật ký hoạt động server sse trực tiếp tuananh',
         valueText: logsMeta ? `${logsMeta.totalBuffered} dòng` : 'Trực tiếp',
         valueTone: 'default',
         iconBgClass: 'bg-violet-500 text-white',
@@ -571,14 +544,8 @@ export function SettingsModal({
     trustedDevices.length,
   ]);
 
-  const filteredGroups = useMemo(() => {
-    const q = settingsSearch.trim().toLowerCase();
-    const visible = menuItems.filter((item) => {
-      if (item.hidden) return false;
-      if (!q) return true;
-      const hay = `${item.title} ${item.subtitle} ${item.keywords}`.toLowerCase();
-      return hay.includes(q);
-    });
+  const settingGroups = useMemo(() => {
+    const visible = menuItems.filter((item) => !item.hidden);
 
     return [
       {
@@ -597,7 +564,7 @@ export function SettingsModal({
         items: visible.filter((i) => i.group === 'system'),
       },
     ].filter((g) => g.items.length > 0);
-  }, [menuItems, settingsSearch]);
+  }, [menuItems]);
 
   const currentSectionTitle = useMemo(() => {
     if (!isAdmin) return 'Xác thực Admin';
@@ -682,7 +649,11 @@ export function SettingsModal({
         </div>
 
         {/* Scrollable Content */}
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden p-4 sm:p-6">
+        <div
+          className={`min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain p-4 sm:p-6 ${
+            !isAdmin ? 'flex flex-col' : 'block'
+          }`}
+        >
           {!isAdmin ? (
             <div className="flex flex-1 flex-col items-center justify-center py-4 sm:py-10">
               <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-5 shadow-xs sm:p-8 dark:border-zinc-800 dark:bg-zinc-900">
@@ -748,32 +719,114 @@ export function SettingsModal({
             <>
               {activeSection === 'root' && (
             <div className="mx-auto w-full min-w-0 max-w-2xl space-y-5">
-              {/* Root search bar (iOS Settings style) */}
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-                <input
-                  type="text"
-                  value={settingsSearch}
-                  onChange={(e) => setSettingsSearch(e.target.value)}
-                  placeholder="Tìm kiếm mục cài đặt..."
-                  aria-label="Tìm kiếm mục cài đặt"
-                  className="h-10 w-full rounded-xl border border-zinc-200 bg-white pl-10 pr-9 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-blue-500 focus:outline-none dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder:text-zinc-500"
-                />
-                {settingsSearch && (
-                  <button
-                    type="button"
-                    onClick={() => setSettingsSearch('')}
-                    aria-label="Xóa tìm kiếm"
-                    className="absolute right-2.5 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
+              {/* Top quick controls: Server Restart (first) + Admin Lock */}
+              <div className="w-full min-w-0 divide-y divide-zinc-200/80 overflow-hidden rounded-2xl border border-zinc-200/90 bg-white dark:divide-zinc-800/80 dark:border-zinc-800/80 dark:bg-zinc-900">
+                {/* 1. Server Restart (at the very top, direct button) */}
+                <div className="px-3.5 py-3 sm:px-4">
+                  <div className="flex w-full min-w-0 items-center justify-between gap-3">
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500 text-white shadow-xs">
+                        <Power className="h-4 w-4" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[15px] font-medium text-zinc-900 dark:text-zinc-100">
+                          Khởi động lại Server
+                        </div>
+                        <div
+                          className={`truncate text-xs font-medium ${
+                            githubStatus?.serverPendingRestart
+                              ? 'text-amber-600 dark:text-amber-400'
+                              : 'text-zinc-500 dark:text-zinc-400'
+                          }`}
+                        >
+                          {isRestartingServer
+                            ? 'Đang khởi động lại...'
+                            : githubStatus?.serverPendingRestart
+                              ? 'Nên restart để áp dụng thay đổi'
+                              : 'Sẵn sàng'}
+                        </div>
+                      </div>
+                    </div>
 
-              {/* Direct Admin lock bar when not searching */}
-              {!settingsSearch.trim() && (
-                <div className="flex w-full min-w-0 items-center justify-between gap-3 rounded-2xl border border-zinc-200/90 bg-white px-3.5 py-3 sm:px-4 dark:border-zinc-800/80 dark:bg-zinc-900">
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {confirmRestartServer && !isRestartingServer ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmRestartServer(false)}
+                            className="inline-flex h-9 items-center rounded-xl border border-zinc-300 px-2.5 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                          >
+                            Hủy
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isUpdatingGithub}
+                            onClick={() => void handleRestartServer()}
+                            className="inline-flex h-9 items-center gap-1 rounded-xl bg-amber-600 px-3 text-xs font-semibold text-white transition-colors hover:bg-amber-500 disabled:opacity-50"
+                          >
+                            <Power className="h-3.5 w-3.5 shrink-0" />
+                            <span>Xác nhận</span>
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={isRestartingServer || isUpdatingGithub}
+                          onClick={() => {
+                            setRestartNotice(null);
+                            setConfirmRestartServer(true);
+                          }}
+                          className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 px-3 text-xs font-semibold text-amber-800 transition-colors hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800/70 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-950/60"
+                        >
+                          <RotateCw
+                            className={`h-3.5 w-3.5 shrink-0 ${isRestartingServer ? 'animate-spin' : ''}`}
+                          />
+                          <span>{isRestartingServer ? 'Đang restart...' : 'Restart'}</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {restartNotice && (
+                    <div
+                      className={`mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 text-xs ${
+                        restartNotice.type === 'success'
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-200'
+                          : restartNotice.type === 'warning'
+                            ? 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-200'
+                            : 'border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-200'
+                      }`}
+                    >
+                      <div className="flex items-start gap-2">
+                        {restartNotice.type === 'success' ? (
+                          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                        ) : (
+                          <AlertCircle
+                            className={`mt-0.5 h-4 w-4 shrink-0 ${
+                              restartNotice.type === 'warning'
+                                ? 'text-amber-500 dark:text-amber-400'
+                                : 'text-rose-500 dark:text-rose-400'
+                            }`}
+                          />
+                        )}
+                        <span>{restartNotice.message}</span>
+                      </div>
+                      {restartNotice.type === 'success' && (
+                        <button
+                          type="button"
+                          onClick={() => window.location.reload()}
+                          className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md bg-emerald-600 px-2.5 text-xs font-medium text-white hover:bg-emerald-500"
+                        >
+                          <RotateCw className="h-3 w-3" />
+                          <span>Tải lại trang</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* 2. Admin Lock bar */}
+                <div className="flex w-full min-w-0 items-center justify-between gap-3 px-3.5 py-3 sm:px-4">
                   <div className="flex min-w-0 flex-1 items-center gap-3">
                     <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-500 text-white shadow-xs">
                       <ShieldCheck className="h-4 w-4" />
@@ -800,14 +853,9 @@ export function SettingsModal({
                     <span>Khóa quyền</span>
                   </button>
                 </div>
-              )}
+              </div>
 
-              {filteredGroups.length === 0 ? (
-                <div className="rounded-2xl border border-zinc-200 bg-white px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-                  Không tìm thấy mục cài đặt phù hợp với "{settingsSearch}".
-                </div>
-              ) : (
-                filteredGroups.map((group) => (
+              {settingGroups.map((group) => (
                   <div key={group.id} className="w-full min-w-0 space-y-1.5">
                     <p className="px-2 text-xs font-medium text-zinc-500 dark:text-zinc-400">
                       {group.label}
@@ -864,8 +912,7 @@ export function SettingsModal({
                       })}
                     </div>
                   </div>
-                ))
-              )}
+                ))}
             </div>
           )}
 
@@ -1474,101 +1521,6 @@ export function SettingsModal({
                       </span>
                     </button>
                   </div>
-                </section>
-            </div>
-          )}
-
-          {/* Subview 5: Server Restart */}
-          {activeSection === 'server-restart' && (
-            <div className="mx-auto w-full min-w-0 max-w-2xl">
-                <section className="rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <h2 className="font-display text-base font-semibold text-zinc-950 dark:text-zinc-50">
-                        Khởi động lại Server Node.js
-                      </h2>
-                      <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-                        Khởi động lại tiến trình Node.js để áp dụng thay đổi backend hoặc làm mới kết nối server. Dữ liệu ảnh, danh mục và đơn hàng vẫn được giữ nguyên.
-                      </p>
-                    </div>
-
-                    <div className="flex shrink-0 flex-wrap items-center gap-2">
-                      {confirmRestartServer && !isRestartingServer ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => setConfirmRestartServer(false)}
-                            className="inline-flex h-9 items-center rounded-lg border border-zinc-300 px-3 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                          >
-                            Hủy
-                          </button>
-                          <button
-                            type="button"
-                            disabled={isUpdatingGithub}
-                            onClick={() => void handleRestartServer()}
-                            className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-amber-600 px-3.5 text-xs font-semibold text-white transition-colors hover:bg-amber-500 disabled:opacity-50"
-                          >
-                            <Power className="h-3.5 w-3.5" />
-                            <span>Xác nhận Restart</span>
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          type="button"
-                          disabled={isRestartingServer || isUpdatingGithub}
-                          onClick={() => {
-                            setRestartNotice(null);
-                            setConfirmRestartServer(true);
-                          }}
-                          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3.5 text-xs font-semibold text-amber-800 transition-colors hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800/70 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-950/60"
-                        >
-                          <RotateCw
-                            className={`h-3.5 w-3.5 ${isRestartingServer ? 'animate-spin' : ''}`}
-                          />
-                          <span>
-                            {isRestartingServer ? 'Đang khởi động lại server...' : 'Restart Server'}
-                          </span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {restartNotice && (
-                    <div
-                      className={`mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3.5 py-2.5 text-xs ${
-                        restartNotice.type === 'success'
-                          ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-200'
-                          : restartNotice.type === 'warning'
-                            ? 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-200'
-                            : 'border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-200'
-                      }`}
-                    >
-                      <div className="flex items-start gap-2">
-                        {restartNotice.type === 'success' ? (
-                          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                        ) : (
-                          <AlertCircle
-                            className={`mt-0.5 h-4 w-4 shrink-0 ${
-                              restartNotice.type === 'warning'
-                                ? 'text-amber-500 dark:text-amber-400'
-                                : 'text-rose-500 dark:text-rose-400'
-                            }`}
-                          />
-                        )}
-                        <span>{restartNotice.message}</span>
-                      </div>
-                      {restartNotice.type === 'success' && (
-                        <button
-                          type="button"
-                          onClick={() => window.location.reload()}
-                          className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md bg-emerald-600 px-2.5 text-xs font-medium text-white hover:bg-emerald-500"
-                        >
-                          <RotateCw className="h-3 w-3" />
-                          <span>Tải lại trang</span>
-                        </button>
-                      )}
-                    </div>
-                  )}
                 </section>
             </div>
           )}
