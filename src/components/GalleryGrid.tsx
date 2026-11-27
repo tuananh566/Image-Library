@@ -1,12 +1,17 @@
-import { Check, ImageIcon, Upload } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { Check, ChevronDown, ImageIcon, Upload } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { formatFileSize, warmImageUrl } from '../lib/imageProcessor';
 import type { Category, ScoredImage, ViewMode } from '../types/vault';
+
+const INITIAL_ALBUM_BATCH_SIZE = 100;
+const LOAD_MORE_STEP = 100;
+const LOOKAHEAD_BUFFER = 100;
 
 interface GalleryGridProps {
   items: ScoredImage[];
   categories: Category[];
   viewMode: ViewMode;
+  scopeKey?: string;
   isSidebarCollapsed?: boolean;
   isBatchMode: boolean;
   selectedIds: string[];
@@ -62,6 +67,7 @@ export function GalleryGrid({
   items,
   categories,
   viewMode,
+  scopeKey = '',
   isSidebarCollapsed = false,
   isBatchMode,
   selectedIds,
@@ -73,10 +79,96 @@ export function GalleryGrid({
   hasActiveFilters,
   onClearFilters,
 }: GalleryGridProps) {
-  const categoryMap = new Map(categories.map((c) => [c.id, c.name]));
+  const categoryMap = useMemo(
+    () => new Map(categories.map((c) => [c.id, c.name])),
+    [categories]
+  );
+  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const [visibleCount, setVisibleCount] = useState(INITIAL_ALBUM_BATCH_SIZE);
+  const gridRootRef = useRef<HTMLDivElement>(null);
+  const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
+
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pressOriginRef = useRef<{ x: number; y: number; id: string } | null>(null);
   const suppressNextClickIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    setVisibleCount(INITIAL_ALBUM_BATCH_SIZE);
+    const scrollRoot = gridRootRef.current?.closest('.overflow-y-auto') as HTMLElement | null;
+    if (scrollRoot) {
+      scrollRoot.scrollTop = 0;
+    }
+  }, [scopeKey]);
+
+  const visibleItems = useMemo(
+    () => items.slice(0, visibleCount),
+    [items, visibleCount]
+  );
+  const remainingCount = Math.max(0, items.length - visibleItems.length);
+
+  useEffect(() => {
+    if (remainingCount <= 0) return;
+
+    const rootEl = (gridRootRef.current?.closest('.overflow-y-auto') ||
+      loadMoreSentinelRef.current?.closest('.overflow-y-auto')) as HTMLElement | null;
+    if (!rootEl) return;
+
+    let rafId: number | null = null;
+    const checkLookahead = () => {
+      rafId = null;
+      const { scrollTop, clientHeight, scrollHeight } = rootEl;
+      if (scrollTop <= 24 && scrollHeight > clientHeight + 240) {
+        return;
+      }
+      const currentVisible = Math.min(items.length, visibleCount);
+      if (currentVisible >= items.length) return;
+
+      const viewedRatio = Math.min(1, (scrollTop + clientHeight) / Math.max(1, scrollHeight));
+      const viewedEndIndex = Math.ceil(viewedRatio * currentVisible);
+      const targetCount = Math.min(
+        items.length,
+        Math.ceil((viewedEndIndex + LOOKAHEAD_BUFFER) / LOAD_MORE_STEP) * LOAD_MORE_STEP
+      );
+
+      if (targetCount > currentVisible) {
+        setVisibleCount((prev) => Math.max(prev, targetCount));
+      }
+    };
+
+    const handleScroll = () => {
+      if (rafId !== null) return;
+      rafId = window.requestAnimationFrame(checkLookahead);
+    };
+
+    rootEl.addEventListener('scroll', handleScroll, { passive: true });
+
+    const sentinel = loadMoreSentinelRef.current;
+    const observer = sentinel
+      ? new IntersectionObserver(
+          (entries) => {
+            if (entries.some((entry) => entry.isIntersecting)) {
+              setVisibleCount((prev) => Math.min(items.length, prev + LOAD_MORE_STEP));
+            }
+          },
+          {
+            root: rootEl,
+            rootMargin: '800px 0px',
+          }
+        )
+      : null;
+
+    if (sentinel && observer) {
+      observer.observe(sentinel);
+    }
+
+    return () => {
+      if (rafId !== null) {
+        window.cancelAnimationFrame(rafId);
+      }
+      rootEl.removeEventListener('scroll', handleScroll);
+      observer?.disconnect();
+    };
+  }, [remainingCount, items.length, visibleCount, viewMode, scopeKey]);
 
   const clearLongPressTimer = () => {
     if (longPressTimerRef.current) {
@@ -179,7 +271,10 @@ export function GalleryGrid({
 
   if (viewMode === 'list') {
     return (
-      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+      <div
+        ref={gridRootRef}
+        className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950"
+      >
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
             <thead>
@@ -192,8 +287,8 @@ export function GalleryGrid({
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
-              {items.map(({ image }) => {
-                const isSelected = selectedIds.includes(image.id);
+              {visibleItems.map(({ image }, index) => {
+                const isSelected = selectedIdSet.has(image.id);
                 const catName = image.categoryId
                   ? categoryMap.get(image.categoryId) || 'Chưa phân loại'
                   : 'Chưa phân loại';
@@ -233,6 +328,8 @@ export function GalleryGrid({
                           <ResilientThumbnail
                             src={image.thumbnailUrl}
                             alt={image.title}
+                            priority={index < visibleItems.length}
+                            highFetchPriority={index < 12}
                             className="h-full w-full object-cover"
                           />
                         </div>
@@ -261,6 +358,29 @@ export function GalleryGrid({
             </tbody>
           </table>
         </div>
+
+        {remainingCount > 0 && (
+          <div
+            ref={loadMoreSentinelRef}
+            className="flex flex-wrap items-center justify-between gap-2 border-t border-zinc-200 px-4 py-3 text-xs text-zinc-500 dark:border-zinc-800 dark:text-zinc-400"
+          >
+            <span className="tabular-nums">
+              Đang hiển thị {visibleItems.length} / {items.length} ảnh gần nhất
+            </span>
+            <button
+              type="button"
+              onClick={() =>
+                setVisibleCount((prev) => Math.min(items.length, prev + LOAD_MORE_STEP))
+              }
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-3 font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              <ChevronDown className="h-3.5 w-3.5" />
+              <span>
+                Tải thêm {Math.min(LOAD_MORE_STEP, remainingCount)} ảnh (còn {remainingCount})
+              </span>
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -274,90 +394,115 @@ export function GalleryGrid({
     : 'columns-2 md:portrait:columns-3 md:landscape:columns-5';
 
   return (
-    <div
-      className={
-        isMasonry
-          ? `${masonryColsClass} gap-1.5 md:portrait:gap-2 md:landscape:gap-2`
-          : `grid ${gridColsClass} gap-1.5 md:portrait:gap-2 md:landscape:gap-2`
-      }
-    >
-      {items.map(({ image }, index) => {
-        const isSelected = selectedIds.includes(image.id);
+    <div ref={gridRootRef} className="space-y-3">
+      <div
+        className={
+          isMasonry
+            ? `${masonryColsClass} gap-1.5 md:portrait:gap-2 md:landscape:gap-2`
+            : `grid ${gridColsClass} gap-1.5 md:portrait:gap-2 md:landscape:gap-2`
+        }
+      >
+        {visibleItems.map(({ image }, index) => {
+          const isSelected = selectedIdSet.has(image.id);
 
-        return (
-          <article
-            key={image.id}
-            data-image-card={image.id}
-            className={`group relative overflow-hidden rounded-lg border bg-white [content-visibility:auto] [contain-intrinsic-size:auto_180px] transition-[transform,border-color] duration-150 hover:-translate-y-0.5 active:scale-[0.97] dark:bg-zinc-950 ${
-              isMasonry ? 'mb-1.5 break-inside-avoid md:portrait:mb-2 md:landscape:mb-2' : 'flex flex-col'
-            } ${
-              isSelected
-                ? 'border-blue-600 ring-2 ring-blue-600/35 dark:border-blue-500'
-                : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-800/80 dark:hover:border-zinc-700'
-            }`}
-          >
-            {/* Image Container */}
-            <div
-              role="button"
-              tabIndex={0}
-              onMouseEnter={() => {
-                if (!isBatchMode) warmImageUrl(image.fullUrl);
-              }}
-              onPointerDown={(e) => {
-                if (!isBatchMode) warmImageUrl(image.fullUrl);
-                handleCardPointerDown(e, image.id);
-              }}
-              onPointerMove={handleCardPointerMove}
-              onPointerUp={clearLongPressTimer}
-              onPointerCancel={clearLongPressTimer}
-              onPointerLeave={clearLongPressTimer}
-              onContextMenu={(e) => {
-                if (onLongPressSelect) e.preventDefault();
-              }}
-              onClick={() => handleCardClick(image.id)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  if (isBatchMode) onToggleSelect(image.id);
-                  else onOpenImage(image.id);
-                }
-              }}
-              className={`relative w-full cursor-pointer overflow-hidden bg-zinc-100 focus-visible:outline-2 focus-visible:outline-blue-600 dark:bg-zinc-900 ${
-                onLongPressSelect ? 'select-none [-webkit-touch-callout:none]' : ''
+          return (
+            <article
+              key={image.id}
+              data-image-card={image.id}
+              className={`group relative overflow-hidden rounded-lg border bg-white [content-visibility:auto] [contain-intrinsic-size:auto_180px] transition-[transform,border-color] duration-150 hover:-translate-y-0.5 active:scale-[0.97] dark:bg-zinc-950 ${
+                isMasonry ? 'mb-1.5 break-inside-avoid md:portrait:mb-2 md:landscape:mb-2' : 'flex flex-col'
               } ${
-                isMasonry ? '' : 'aspect-[4/3]'
+                isSelected
+                  ? 'border-blue-600 ring-2 ring-blue-600/35 dark:border-blue-500'
+                  : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-800/80 dark:hover:border-zinc-700'
               }`}
             >
-              <ResilientThumbnail
-                src={image.thumbnailUrl}
-                alt={image.title}
-                priority={index < 12}
-                highFetchPriority={index < 6}
-                className={`w-full transition-transform duration-200 group-hover:scale-[1.02] ${
-                  isMasonry ? 'h-auto block' : 'h-full object-cover'
+              {/* Image Container */}
+              <div
+                role="button"
+                tabIndex={0}
+                onMouseEnter={() => {
+                  if (!isBatchMode) warmImageUrl(image.fullUrl);
+                }}
+                onPointerDown={(e) => {
+                  if (!isBatchMode) warmImageUrl(image.fullUrl);
+                  handleCardPointerDown(e, image.id);
+                }}
+                onPointerMove={handleCardPointerMove}
+                onPointerUp={clearLongPressTimer}
+                onPointerCancel={clearLongPressTimer}
+                onPointerLeave={clearLongPressTimer}
+                onContextMenu={(e) => {
+                  if (onLongPressSelect) e.preventDefault();
+                }}
+                onClick={() => handleCardClick(image.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    if (isBatchMode) onToggleSelect(image.id);
+                    else onOpenImage(image.id);
+                  }
+                }}
+                className={`relative w-full cursor-pointer overflow-hidden bg-zinc-100 focus-visible:outline-2 focus-visible:outline-blue-600 dark:bg-zinc-900 ${
+                  onLongPressSelect ? 'select-none [-webkit-touch-callout:none]' : ''
+                } ${
+                  isMasonry ? '' : 'aspect-[4/3]'
                 }`}
-              />
+              >
+                <ResilientThumbnail
+                  src={image.thumbnailUrl}
+                  alt={image.title}
+                  priority={index < visibleItems.length}
+                  highFetchPriority={index < 12}
+                  className={`w-full transition-transform duration-200 group-hover:scale-[1.02] ${
+                    isMasonry ? 'h-auto block' : 'h-full object-cover'
+                  }`}
+                />
 
-              {/* Hover Scrim & Quick Actions */}
-              <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/20 opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
+                {/* Hover Scrim & Quick Actions */}
+                <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/20 opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
 
-              {isBatchMode && (
-                <div className="pointer-events-none absolute left-2.5 top-2.5">
-                  <span
-                    className={`flex h-6 w-6 items-center justify-center rounded-md border transition-colors ${
-                      isSelected
-                        ? 'border-blue-500 bg-blue-600 text-white shadow'
-                        : 'border-white/80 bg-black/45 text-transparent'
-                    }`}
-                  >
-                    <Check className="h-3.5 w-3.5" />
-                  </span>
-                </div>
-              )}
-            </div>
-          </article>
-        );
-      })}
+                {isBatchMode && (
+                  <div className="pointer-events-none absolute left-2.5 top-2.5">
+                    <span
+                      className={`flex h-6 w-6 items-center justify-center rounded-md border transition-colors ${
+                        isSelected
+                          ? 'border-blue-500 bg-blue-600 text-white shadow'
+                          : 'border-white/80 bg-black/45 text-transparent'
+                      }`}
+                    >
+                      <Check className="h-3.5 w-3.5" />
+                    </span>
+                  </div>
+                )}
+              </div>
+            </article>
+          );
+        })}
+      </div>
+
+      {remainingCount > 0 && (
+        <div
+          ref={loadMoreSentinelRef}
+          className="flex flex-col items-center justify-center gap-2.5 rounded-xl border border-zinc-800/80 bg-zinc-900/40 px-4 py-4 text-center"
+        >
+          <p className="text-xs text-zinc-400 tabular-nums">
+            Đang hiển thị {visibleItems.length} / {items.length} ảnh gần nhất
+          </p>
+          <button
+            type="button"
+            onClick={() =>
+              setVisibleCount((prev) => Math.min(items.length, prev + LOAD_MORE_STEP))
+            }
+            className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-zinc-700 bg-zinc-900 px-4 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800"
+          >
+            <ChevronDown className="h-3.5 w-3.5" />
+            <span>
+              Tải thêm {Math.min(LOAD_MORE_STEP, remainingCount)} ảnh (còn {remainingCount})
+            </span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

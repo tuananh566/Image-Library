@@ -1110,6 +1110,7 @@ export default function App() {
                           items={scoredItems}
                           categories={categories}
                           viewMode={viewMode}
+                          scopeKey={`${activeTab}:${filters.categoryId}:${filters.query}:${filters.aspectFilter}:${filters.sortBy}`}
                           isSidebarCollapsed={isDesktopSidebarCollapsed}
                           isBatchMode={isBatchMode}
                           selectedIds={selectedIds}
