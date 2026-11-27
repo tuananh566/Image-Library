@@ -4,11 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BatchActionBar } from './components/BatchActionBar';
 import { CategoriesView } from './components/CategoriesView';
 import { DeviceVerificationGate } from './components/DeviceVerificationGate';
-import { FloatingOrdersCapsule } from './components/FloatingOrdersCapsule';
+import { FloatingAddButton } from './components/FloatingAddButton';
 import { GalleryGrid } from './components/GalleryGrid';
 import { ImageInspectorModal } from './components/ImageInspectorModal';
-import { OrderModal } from './components/OrderModal';
-import { OrdersView } from './components/OrdersView';
 import { SettingsModal } from './components/SettingsModal';
 import { DEFAULT_SIDEBAR_STEP, Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
@@ -37,33 +35,26 @@ import {
 import {
   batchUpdateServerImages,
   clearServerVault,
-  createServerOrder,
   deleteServerCategories,
   deleteServerCategory,
   deleteServerImages,
-  deleteServerOrder,
   downloadServerBackupBlob,
   fetchServerVault,
   getPendingLocalSyncCount,
   importServerBackupFile,
   reorderServerCategories,
   restoreFromAutoBackup,
-  saveFullServerOrder,
   saveServerCategory,
   seedServerSampleVault,
   syncLocalIndexedDbToServer,
   updateServerImageMetadata,
-  updateServerOrder,
   uploadServerImagesBatch,
   type BackupImportProgress,
 } from './lib/serverVault';
-import { getLocalDateKey } from './lib/orderFilters';
 import { filterAndScoreImages } from './lib/smartSearch';
 import type {
   AppTab,
   Category,
-  OrderFilterMode,
-  OrderRecord,
   SearchFilterState,
   StorageStats,
   VaultImageRecord,
@@ -112,7 +103,6 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [categories, setCategories] = useState<Category[]>([]);
   const [images, setImages] = useState<VaultImageView[]>([]);
-  const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [pendingLocalSync, setPendingLocalSync] = useState<{
     categories: number;
     images: number;
@@ -121,8 +111,6 @@ export default function App() {
   const [isSyncingLocal, setIsSyncingLocal] = useState(false);
 
   const [viewMode] = useState<ViewMode>('grid');
-  const [orderFilterMode, setOrderFilterMode] = useState<OrderFilterMode>('unreceived');
-  const [orderFilterDate, setOrderFilterDate] = useState<string>(() => getLocalDateKey());
   const [filters, setFilters] = useState<SearchFilterState>({
     query: '',
     categoryId: 'all',
@@ -135,10 +123,6 @@ export default function App() {
   const [sidebarWidthStep, setSidebarWidthStep] = useState(DEFAULT_SIDEBAR_STEP);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
-  const [orderPresetImage, setOrderPresetImage] = useState<VaultImageView | null>(null);
-  const [editingOrder, setEditingOrder] = useState<OrderRecord | null>(null);
-  const [openedOrdersFromInside, setOpenedOrdersFromInside] = useState(false);
   const [droppedFiles, setDroppedFiles] = useState<File[]>([]);
   const [isDraggingGlobal, setIsDraggingGlobal] = useState(false);
   const mobileEdgeTouchStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -240,9 +224,6 @@ export default function App() {
   }, [activeTab, filters.categoryId]);
 
   useEffect(() => {
-    if (activeTab !== 'orders') {
-      setOpenedOrdersFromInside(false);
-    }
     if (activeTab !== 'library') {
       setIsBatchMode(false);
       setSelectedIds([]);
@@ -254,40 +235,9 @@ export default function App() {
     filters.categoryId !== 'all' &&
     filters.categoryId !== 'uncategorized';
 
-  const isViewingOrdersFromInside =
-    activeTab === 'orders' && openedOrdersFromInside;
-
-  const canGoBack = isViewingSpecificCategory || isViewingOrdersFromInside;
-
-  const handleOpenOrdersFromInside = useCallback(() => {
-    setOpenedOrdersFromInside(true);
-    setViewTransition({ mode: 'fade', originX: '50%', originY: '50%' });
-    setActiveTab('orders');
-  }, []);
+  const canGoBack = isViewingSpecificCategory;
 
   const handleGoBack = useCallback(() => {
-    if (isViewingOrdersFromInside) {
-      setOpenedOrdersFromInside(false);
-      setViewTransition({
-        mode: 'fade',
-        originX: '50%',
-        originY: '50%',
-      });
-
-      if (navHistory.length > 0) {
-        const target = navHistory[navHistory.length - 1];
-        isGoingBackRef.current = true;
-        setNavHistory((hist) => hist.slice(0, -1));
-        setActiveTab(target.tab);
-        setFilters((prev) => ({ ...prev, categoryId: target.categoryId }));
-        return;
-      }
-
-      isGoingBackRef.current = true;
-      setActiveTab('categories');
-      return;
-    }
-
     if (!isViewingSpecificCategory) return;
 
     const origin = lastCategoryOriginRef.current;
@@ -308,7 +258,7 @@ export default function App() {
 
     isGoingBackRef.current = true;
     setActiveTab('categories');
-  }, [isViewingOrdersFromInside, isViewingSpecificCategory, navHistory]);
+  }, [isViewingSpecificCategory, navHistory]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -392,12 +342,10 @@ export default function App() {
       if (!status.trusted) {
         logoutAdmin();
         setIsSettingsOpen(false);
-        setIsOrderModalOpen(false);
         setIsUploadOpen(false);
         setInspectedImageId(null);
         setCategories([]);
         setImages([]);
-        setOrders([]);
         setDeviceGateState('unverified');
       } else {
         setDeviceGateState('trusted');
@@ -415,12 +363,10 @@ export default function App() {
     return subscribeDeviceUnauthorized(() => {
       logoutAdmin();
       setIsSettingsOpen(false);
-      setIsOrderModalOpen(false);
       setIsUploadOpen(false);
       setInspectedImageId(null);
       setCategories([]);
       setImages([]);
-      setOrders([]);
       setDeviceGateState('unverified');
       void verifyCurrentDeviceStatus();
     });
@@ -441,7 +387,6 @@ export default function App() {
         const vault = await fetchServerVault();
         setCategories(vault.categories);
         setImages(vault.images);
-        setOrders(vault.orders || []);
         if (!localSyncEmptyRef.current) {
           const pending = await getPendingLocalSyncCount(
             new Set(vault.categories.map((c) => c.id)),
@@ -837,7 +782,6 @@ export default function App() {
   );
 
   const headerTitle = useMemo(() => {
-    if (activeTab === 'orders') return 'Đơn hàng';
     if (activeTab === 'categories') return 'Album';
     if (filters.categoryId === 'all') return 'Tất cả ảnh mẫu';
     if (filters.categoryId === 'uncategorized') return 'Chưa phân loại';
@@ -931,35 +875,11 @@ export default function App() {
 
       <TopBar
         title={headerTitle}
-        onSelectTab={(tab) => {
-          if (tab === 'categories' && isViewingSpecificCategory) {
-            const origin = lastCategoryOriginRef.current;
-            setViewTransition({
-              mode: 'zoom-out',
-              originX: origin.originX,
-              originY: origin.originY,
-            });
-          } else {
-            setViewTransition({ mode: 'fade', originX: '50%', originY: '50%' });
-          }
-          setActiveTab(tab);
-        }}
         onBack={handleGoBack}
         canGoBack={canGoBack}
         onToggleMobileSidebar={() => setIsMobileSidebarOpen((v) => !v)}
         isDesktopSidebarCollapsed={isDesktopSidebarCollapsed}
         onToggleDesktopSidebar={() => setIsDesktopSidebarCollapsed((v) => !v)}
-        onOpenCreateOrder={() => {
-          setOrderPresetImage(null);
-          setEditingOrder(null);
-          setIsOrderModalOpen(true);
-        }}
-        isOrdersView={activeTab === 'orders'}
-        orders={orders}
-        orderFilterMode={orderFilterMode}
-        orderFilterDate={orderFilterDate}
-        onChangeOrderFilterMode={setOrderFilterMode}
-        onChangeOrderFilterDate={setOrderFilterDate}
       />
 
       <div
@@ -991,13 +911,11 @@ export default function App() {
         <Sidebar
           activeTab={activeTab}
           onSelectTab={(tab) => {
-            setOpenedOrdersFromInside(false);
             setViewTransition({ mode: 'fade', originX: '50%', originY: '50%' });
             setActiveTab(tab);
           }}
           categories={categories}
           totalCount={images.length}
-          ordersCount={orders.filter((o) => !o.isReceived).length}
           categoryCounts={categoryCounts}
           selectedCategoryId={filters.categoryId}
           onSelectCategory={(id) => {
@@ -1142,11 +1060,8 @@ export default function App() {
                       )}
                     </div>
 
-                    {/* Bottom-Right Orders (when sidebar/mục lục is closed) & Add Circle */}
-                    <FloatingOrdersCapsule
-                      showOrdersMobile={!isMobileSidebarOpen}
-                      showOrdersDesktop={isDesktopSidebarCollapsed}
-                      onOpenOrders={handleOpenOrdersFromInside}
+                    {/* Bottom-Right Add Circle */}
+                    <FloatingAddButton
                       canAdd={isAdmin}
                       onAddClick={() => {
                         setDroppedFiles([]);
@@ -1156,50 +1071,12 @@ export default function App() {
                       addAriaLabel="Thêm ảnh mẫu"
                     />
                   </>
-                ) : activeTab === 'orders' ? (
-                  <OrdersView
-                    orders={orders}
-                    filterMode={orderFilterMode}
-                    filterDate={orderFilterDate}
-                    onChangeFilterMode={setOrderFilterMode}
-                    onChangeFilterDate={setOrderFilterDate}
-                    onOpenCreateOrder={() => {
-                      setOrderPresetImage(null);
-                      setEditingOrder(null);
-                      setIsOrderModalOpen(true);
-                    }}
-                    onEditOrder={(order) => {
-                      setOrderPresetImage(null);
-                      setEditingOrder(order);
-                      setIsOrderModalOpen(true);
-                    }}
-                    onToggleOrderReady={async (order) => {
-                      await updateServerOrder(order.id, {
-                        isReady: !order.isReady,
-                      });
-                      await reloadVault();
-                    }}
-                    onMarkOrderReceived={async (order) => {
-                      await updateServerOrder(order.id, {
-                        isReceived: true,
-                        isPaid: true,
-                      });
-                      await reloadVault();
-                    }}
-                    onDeleteOrder={async (orderId) => {
-                      await deleteServerOrder(orderId);
-                      await reloadVault();
-                    }}
-                  />
                 ) : (
                   <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                     <CategoriesView
                       categories={categories}
                       images={images}
                       canManage={isAdmin}
-                      showOrdersMobile={!isMobileSidebarOpen}
-                      showOrdersDesktop={isDesktopSidebarCollapsed}
-                      onOpenOrders={handleOpenOrdersFromInside}
                       onCreateCategory={handleFullCreateCategory}
                       onUpdateCategory={async (cat) => {
                         if (!isAdmin) return;
@@ -1350,42 +1227,7 @@ export default function App() {
         onUpdate={handleUpdateImage}
         onDelete={handleDeleteImage}
         onCreateCategory={handleQuickCreateCategory}
-        onCreateOrderFromImage={(img) => {
-          setInspectedImageId(null);
-          setEditingOrder(null);
-          setOrderPresetImage(img);
-          setIsOrderModalOpen(true);
-        }}
         canManage={isAdmin}
-      />
-
-      <OrderModal
-        isOpen={isOrderModalOpen}
-        onClose={() => {
-          setIsOrderModalOpen(false);
-          setOrderPresetImage(null);
-          setEditingOrder(null);
-        }}
-        images={images}
-        categories={categories}
-        presetImage={orderPresetImage}
-        editingOrder={editingOrder}
-        onCreateOrder={async (input) => {
-          await createServerOrder(input);
-          await reloadVault();
-        }}
-        onUpdateOrder={async (orderId, input) => {
-          await saveFullServerOrder(orderId, input);
-          await reloadVault();
-        }}
-        onCreatedSuccess={() => {
-          if (orderFilterMode === 'received') {
-            setOrderFilterMode('unreceived');
-          }
-          setOpenedOrdersFromInside(false);
-          setViewTransition({ mode: 'fade', originX: '50%', originY: '50%' });
-          setActiveTab('orders');
-        }}
       />
     </div>
   );

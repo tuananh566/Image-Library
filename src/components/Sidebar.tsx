@@ -1,4 +1,4 @@
-import { Images, LayoutGrid, Settings, ShoppingBag, X } from 'lucide-react';
+import { Images, LayoutGrid, Settings, X } from 'lucide-react';
 import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import { useRef, useState } from 'react';
 import type { AppTab, Category } from '../types/vault';
@@ -23,7 +23,6 @@ interface SidebarProps {
   onSelectTab: (tab: AppTab) => void;
   categories: Category[];
   totalCount: number;
-  ordersCount: number;
   categoryCounts: Record<string, number>;
   selectedCategoryId: string | 'all' | 'uncategorized';
   onSelectCategory: (id: string | 'all' | 'uncategorized') => void;
@@ -41,7 +40,6 @@ export function Sidebar({
   onSelectTab,
   categories,
   totalCount,
-  ordersCount,
   categoryCounts,
   selectedCategoryId,
   onSelectCategory,
@@ -214,28 +212,6 @@ export function Sidebar({
               <span className="tabular-nums text-sm font-semibold opacity-75">{totalCount}</span>
             </button>
         </div>
-
-        {/* Bottom of Upper Section: Larger White-Bordered Orders Button */}
-        <button
-          type="button"
-          onClick={() => {
-            onSelectTab('orders');
-            onCloseMobile();
-          }}
-          className={`flex h-16 w-full shrink-0 items-center justify-between rounded-2xl border border-white/90 px-4 text-[17px] font-semibold transition-colors duration-150 sm:text-lg ${
-            activeTab === 'orders'
-              ? 'bg-zinc-100 text-zinc-950'
-              : 'bg-zinc-900/60 text-zinc-50 hover:bg-zinc-900'
-          }`}
-        >
-          <span className="flex items-center gap-3 truncate">
-            <ShoppingBag className="h-[22px] w-[22px] shrink-0" />
-            <span className="truncate">Đơn hàng</span>
-          </span>
-          <span className="tabular-nums text-base font-bold opacity-85">
-            {ordersCount}
-          </span>
-        </button>
       </div>
     );
   };

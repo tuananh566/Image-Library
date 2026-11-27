@@ -5,7 +5,6 @@ import {
   Download,
   Info,
   Plus,
-  ShoppingBag,
   Trash2,
   X,
 } from 'lucide-react';
@@ -36,7 +35,6 @@ interface ImageInspectorModalProps {
   ) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onCreateCategory: (name: string) => Promise<Category>;
-  onCreateOrderFromImage?: (image: VaultImageView) => void;
   canManage?: boolean;
 }
 
@@ -139,7 +137,6 @@ function ImageInspectorContent({
   onUpdate,
   onDelete,
   onCreateCategory,
-  onCreateOrderFromImage,
   canManage = true,
 }: ImageInspectorModalProps & { image: VaultImageView }) {
   const [fullUrl, setFullUrl] = useState<string>('');
@@ -1023,22 +1020,6 @@ function ImageInspectorContent({
                 >
                   <Info className="h-5 w-5" />
                 </button>
-
-                {onCreateOrderFromImage && (
-                  <>
-                    <span aria-hidden="true" className="mx-0.5 h-5 w-px bg-white/15" />
-                    <button
-                      type="button"
-                      onClick={() => onCreateOrderFromImage(image)}
-                      title="Tạo đơn hàng với ảnh mẫu này"
-                      aria-label="Tạo đơn hàng với ảnh mẫu này"
-                      className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-full px-3 text-xs font-semibold text-blue-300 transition-colors hover:bg-blue-500/20 hover:text-blue-200 sm:px-4 whitespace-nowrap"
-                    >
-                      <ShoppingBag className="h-4 w-4 shrink-0" />
-                      <span>Tạo đơn hàng</span>
-                    </button>
-                  </>
-                )}
               </div>
             )}
           </motion.div>

@@ -16,7 +16,7 @@ import {
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { generateId, isImageFile, stripFileExtension } from '../lib/imageProcessor';
 import type { Category, VaultImageView } from '../types/vault';
-import { FloatingOrdersCapsule } from './FloatingOrdersCapsule';
+import { FloatingAddButton } from './FloatingAddButton';
 
 interface PendingAlbumFile {
   localId: string;
@@ -42,9 +42,6 @@ interface CategoriesViewProps {
   onReorderCategories?: (orderedIds: string[]) => Promise<void>;
   onOpenCategoryInLibrary: (categoryId: string, sourceRect?: DOMRect) => void;
   canManage?: boolean;
-  showOrdersMobile: boolean;
-  showOrdersDesktop: boolean;
-  onOpenOrders: () => void;
 }
 
 const PRESET_COLORS = [
@@ -75,9 +72,6 @@ export function CategoriesView({
   onReorderCategories,
   onOpenCategoryInLibrary,
   canManage = true,
-  showOrdersMobile,
-  showOrdersDesktop,
-  onOpenOrders,
 }: CategoriesViewProps) {
   const createFileInputId = useId();
   const createCameraInputId = useId();
@@ -853,11 +847,8 @@ export function CategoriesView({
         )}
       </div>
 
-      {/* Bottom-Right Orders (when sidebar/mục lục is closed) & Create Album Capsule */}
-      <FloatingOrdersCapsule
-        showOrdersMobile={showOrdersMobile}
-        showOrdersDesktop={showOrdersDesktop}
-        onOpenOrders={onOpenOrders}
+      {/* Bottom-Right Create Album Button */}
+      <FloatingAddButton
         canAdd={canManage}
         onAddClick={openCreateModal}
         addTitle="Tạo album mới"

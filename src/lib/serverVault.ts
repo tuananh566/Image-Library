@@ -1,9 +1,8 @@
-import type { Category, OrderRecord, VaultImageRecord, VaultImageView } from '../types/vault';
+import type { Category, VaultImageRecord, VaultImageView } from '../types/vault';
 import {
   dataUrlToBlob,
   parseBackupFileStreaming,
   type BackupImageInput,
-  type BackupOrderInput,
 } from './backupStreaming';
 import { getAllCategories, getAllImages, type VaultBackupBundle } from './db';
 import {
@@ -16,7 +15,6 @@ import { generateId, processImageBlob } from './imageProcessor';
 export interface ServerVaultResponse {
   categories: Category[];
   images: VaultImageView[];
-  orders: OrderRecord[];
   seeded: boolean;
 }
 
@@ -129,17 +127,6 @@ function hydrateImageUrls(img: VaultImageView): VaultImageView {
   };
 }
 
-function hydrateOrderUrls(order: OrderRecord): OrderRecord {
-  return {
-    ...order,
-    sampleImages: (order.sampleImages || []).map((sample) => ({
-      ...sample,
-      thumbnailUrl: attachDeviceTokenToUrl(sample.thumbnailUrl),
-      ...(sample.fullUrl ? { fullUrl: attachDeviceTokenToUrl(sample.fullUrl) } : {}),
-    })),
-  };
-}
-
 async function assertOk(res: Response): Promise<Response> {
   if (res.status === 401) {
     notifyDeviceUnauthorized();
@@ -207,7 +194,6 @@ export async function fetchServerVault(): Promise<ServerVaultResponse> {
   return {
     ...data,
     images: (data.images || []).map(hydrateImageUrls),
-    orders: (data.orders || []).map(hydrateOrderUrls),
   };
 }
 
@@ -322,100 +308,6 @@ export async function clearServerVault(): Promise<void> {
   await apiFetch('/api/vault', { method: 'DELETE' });
 }
 
-export interface CreateServerOrderInput {
-  customerName: string;
-  customerPhone: string;
-  productName: string;
-  productDescription: string;
-  pickupTime: string;
-  price: number;
-  depositAmount: number;
-  libraryImages: Array<{ imageId: string; title: string }>;
-  customFiles: File[];
-}
-
-export async function createServerOrder(input: CreateServerOrderInput): Promise<OrderRecord> {
-  const formData = new FormData();
-  formData.append(
-    'metadata',
-    JSON.stringify({
-      customerName: input.customerName,
-      customerPhone: input.customerPhone,
-      productName: input.productName,
-      productDescription: input.productDescription,
-      pickupTime: input.pickupTime,
-      price: input.price,
-      depositAmount: input.depositAmount,
-      libraryImages: input.libraryImages,
-    })
-  );
-  for (const file of input.customFiles) {
-    formData.append('customImages', file, file.name || 'sample.jpg');
-  }
-
-  const res = await apiFetch('/api/orders', {
-    method: 'POST',
-    body: formData,
-  });
-  return hydrateOrderUrls(await parseJsonResponse<OrderRecord>(res));
-}
-
-export interface UpdateServerOrderInput extends CreateServerOrderInput {
-  keepCustomImageIds: string[];
-  isReady?: boolean;
-  isReceived?: boolean;
-}
-
-export async function saveFullServerOrder(
-  orderId: string,
-  input: UpdateServerOrderInput
-): Promise<OrderRecord> {
-  const formData = new FormData();
-  formData.append(
-    'metadata',
-    JSON.stringify({
-      customerName: input.customerName,
-      customerPhone: input.customerPhone,
-      productName: input.productName,
-      productDescription: input.productDescription,
-      pickupTime: input.pickupTime,
-      price: input.price,
-      depositAmount: input.depositAmount,
-      isReady: input.isReady,
-      isReceived: input.isReceived,
-      libraryImages: input.libraryImages,
-      keepCustomImageIds: input.keepCustomImageIds,
-    })
-  );
-  for (const file of input.customFiles) {
-    formData.append('customImages', file, file.name || 'sample.jpg');
-  }
-
-  const res = await apiFetch(`/api/orders/${encodeURIComponent(orderId)}`, {
-    method: 'PUT',
-    body: formData,
-  });
-  return hydrateOrderUrls(await parseJsonResponse<OrderRecord>(res));
-}
-
-export async function updateServerOrder(
-  orderId: string,
-  patch: Partial<Pick<OrderRecord, 'pickupTime' | 'price' | 'depositAmount' | 'isPaid' | 'isReady' | 'isReceived'>>
-): Promise<OrderRecord> {
-  const res = await apiFetch(`/api/orders/${encodeURIComponent(orderId)}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(patch),
-  });
-  return hydrateOrderUrls(await parseJsonResponse<OrderRecord>(res));
-}
-
-export async function deleteServerOrder(orderId: string): Promise<void> {
-  await apiFetch(`/api/orders/${encodeURIComponent(orderId)}`, {
-    method: 'DELETE',
-  });
-}
-
 export async function exportServerBackup(): Promise<VaultBackupBundle> {
   const res = await apiFetch('/api/vault/backup', { cache: 'no-store' });
   return parseJsonResponse<VaultBackupBundle>(res);
@@ -435,7 +327,6 @@ export interface BackupImportProgress {
 export interface BackupImportResult {
   importedCategories: number;
   importedImages: number;
-  importedOrders?: number;
 }
 
 export async function importServerBackup(
@@ -584,73 +475,6 @@ export async function importServerBackupFile(
 
     await flushImageBatch();
 
-    // Upload any custom order sample images in small chunks as well
-    let preparedOrders: BackupOrderInput[] | undefined;
-    if (Array.isArray(metadata.orders)) {
-      preparedOrders = [];
-      let orderFormData = new FormData();
-      let orderFileKeys: Array<{ key: string; id: string; mimeType?: string; fileName?: string }> = [];
-      let orderBatchBytes = 0;
-
-      const flushOrderFiles = async () => {
-        if (orderFileKeys.length === 0) return;
-        orderFormData.append('sessionId', sessionId);
-        orderFormData.append('orderFileKeys', JSON.stringify(orderFileKeys));
-        await apiFetch('/api/vault/restore/batch', {
-          method: 'POST',
-          body: orderFormData,
-        });
-        orderFormData = new FormData();
-        orderFileKeys = [];
-        orderBatchBytes = 0;
-      };
-
-      for (let oIdx = 0; oIdx < metadata.orders.length; oIdx++) {
-        const order = metadata.orders[oIdx];
-        if (!order) continue;
-        const nextSamples = [];
-        const samples = Array.isArray(order.sampleImages) ? order.sampleImages : [];
-        for (let sIdx = 0; sIdx < samples.length; sIdx++) {
-          const sample = samples[sIdx];
-          if (!sample) continue;
-          if (sample.dataUrl) {
-            const blob = dataUrlToBlob(sample.dataUrl);
-            if (blob && blob.size > 0) {
-              const key = `${oIdx}_${sIdx}`;
-              const mimeType = sample.mimeType || blob.type || 'image/jpeg';
-              orderFormData.append(`order_file_${key}`, blob, `${sample.id || key}.jpg`);
-              orderFileKeys.push({
-                key,
-                id: sample.id || generateId(),
-                mimeType,
-              });
-              orderBatchBytes += blob.size;
-              nextSamples.push({
-                id: sample.id,
-                sourceImageId: null,
-                title: sample.title || 'Ảnh mẫu đơn hàng',
-                uploadKey: key,
-              });
-              if (orderFileKeys.length >= MAX_BATCH_IMAGES || orderBatchBytes >= MAX_BATCH_BYTES) {
-                await flushOrderFiles();
-              }
-              continue;
-            }
-          }
-          nextSamples.push({
-            id: sample.id,
-            sourceImageId: sample.sourceImageId ?? null,
-            title: sample.title || 'Ảnh mẫu',
-          });
-        }
-        preparedOrders.push({
-          ...order,
-          sampleImages: nextSamples,
-        });
-      }
-      await flushOrderFiles();
-    }
-
     onProgress?.({
       phase: 'committing',
       importedImages: uploadedImages,
@@ -663,7 +487,6 @@ export async function importServerBackupFile(
       body: JSON.stringify({
         sessionId,
         categories: Array.isArray(metadata.categories) ? metadata.categories : [],
-        ...(preparedOrders !== undefined ? { orders: preparedOrders } : {}),
       }),
     });
 
@@ -777,7 +600,6 @@ export interface GithubCommitInfo {
 export interface GithubPreservedCounts {
   images: number;
   categories: number;
-  orders: number;
   devices: number;
 }
 
@@ -938,7 +760,6 @@ export type ActivityLogCategory =
   | 'device'
   | 'image'
   | 'category'
-  | 'order'
   | 'backup'
   | 'github'
   | 'http';
@@ -1007,7 +828,6 @@ export interface AutoBackupStatusResponse {
   sizeBytes: number;
   imageCount: number;
   categoryCount: number;
-  orderCount: number;
   trigger: 'auto' | 'manual' | null;
   isBackingUp: boolean;
   isRestoring: boolean;
@@ -1019,7 +839,6 @@ export interface AutoBackupRestoreResult {
   ok: boolean;
   importedCategories: number;
   importedImages: number;
-  importedOrders: number;
   restoredFromSavedAt: number;
 }
 

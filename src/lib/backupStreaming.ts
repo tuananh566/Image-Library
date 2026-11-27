@@ -1,16 +1,4 @@
-import type { Category, OrderRecord, VaultImageRecord } from '../types/vault';
-
-export interface BackupOrderSampleImageInput {
-  id: string;
-  sourceImageId?: string | null;
-  title?: string;
-  mimeType?: string;
-  dataUrl?: string;
-}
-
-export interface BackupOrderInput extends Omit<OrderRecord, 'sampleImages'> {
-  sampleImages?: BackupOrderSampleImageInput[];
-}
+import type { Category, VaultImageRecord } from '../types/vault';
 
 export interface BackupImageInput
   extends Partial<Omit<VaultImageRecord, 'blob' | 'thumbnailBlob'>> {
@@ -21,7 +9,6 @@ export interface ParsedBackupMetadata {
   version?: number;
   exportedAt?: number;
   categories?: Category[];
-  orders?: BackupOrderInput[];
 }
 
 export interface StreamParseBackupCallbacks {
@@ -150,12 +137,6 @@ export async function parseBackupFileStreaming(
         throw new Error('Danh sách danh mục trong tệp sao lưu không hợp lệ.');
       } else {
         metadata.categories = parsed as Category[];
-      }
-    } else if (key === 'orders') {
-      if (Array.isArray(parsed)) {
-        metadata.orders = parsed as BackupOrderInput[];
-      } else if (parsed === null) {
-        metadata.orders = [];
       }
     }
   };

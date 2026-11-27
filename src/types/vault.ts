@@ -6,14 +6,7 @@ export type ViewMode = 'grid' | 'masonry' | 'list';
 
 export type SortOption = 'newest' | 'oldest' | 'title' | 'relevance' | 'size';
 
-export type AppTab = 'library' | 'categories' | 'orders';
-
-export type OrderFilterMode =
-  | 'unreceived'
-  | 'not-ready'
-  | 'received'
-  | 'all'
-  | 'by-date';
+export type AppTab = 'library' | 'categories';
 
 export interface Category {
   id: string;
@@ -48,32 +41,6 @@ export interface VaultImageRecord {
 export interface VaultImageView extends Omit<VaultImageRecord, 'blob' | 'thumbnailBlob'> {
   thumbnailUrl: string;
   fullUrl?: string;
-}
-
-export interface OrderSampleImage {
-  id: string;
-  sourceImageId?: string | null;
-  title: string;
-  thumbnailUrl: string;
-  fullUrl: string;
-}
-
-export interface OrderRecord {
-  id: string;
-  orderCode: string;
-  customerName: string;
-  customerPhone: string;
-  productName: string;
-  productDescription: string;
-  pickupTime: string;
-  price: number;
-  depositAmount: number;
-  isPaid: boolean;
-  isReady: boolean;
-  isReceived: boolean;
-  sampleImages: OrderSampleImage[];
-  createdAt: number;
-  updatedAt: number;
 }
 
 export interface SearchFilterState {

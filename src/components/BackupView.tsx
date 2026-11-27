@@ -87,7 +87,7 @@ export function BackupView({
       } else {
         setStatusKind('info');
         setStatusMessage(
-          `Đã lưu bản sao lưu nội bộ (${status.imageCount} ảnh, ${status.categoryCount} danh mục, ${status.orderCount} đơn hàng).`
+          `Đã lưu bản sao lưu nội bộ (${status.imageCount} ảnh, ${status.categoryCount} danh mục).`
         );
       }
     }
@@ -185,10 +185,8 @@ export function BackupView({
       const res = onRestoreAutoBackup
         ? await onRestoreAutoBackup()
         : await restoreFromAutoBackup();
-      const orderPart =
-        res.importedOrders > 0 ? ` và ${res.importedOrders} đơn hàng` : '';
       setStatusMessage(
-        `Đã ghi lại thành công dữ liệu từ bản sao lưu nội bộ lúc ${formatTimestamp(res.restoredFromSavedAt)}: ${res.importedImages} ảnh mẫu, ${res.importedCategories} danh mục${orderPart}.`
+        `Đã ghi lại thành công dữ liệu từ bản sao lưu nội bộ lúc ${formatTimestamp(res.restoredFromSavedAt)}: ${res.importedImages} ảnh mẫu, ${res.importedCategories} danh mục.`
       );
       await loadAutoBackupStatus();
     } catch (err) {
@@ -284,12 +282,8 @@ export function BackupView({
       const res = await onImportBackup(file, importMode, (progress) => {
         setImportProgress(progress);
       });
-      const orderPart =
-        res.importedOrders && res.importedOrders > 0
-          ? ` và ${res.importedOrders} đơn hàng`
-          : '';
       setStatusMessage(
-        `Đã khôi phục ${res.importedImages} ảnh mẫu, ${res.importedCategories} danh mục${orderPart}.`
+        `Đã khôi phục ${res.importedImages} ảnh mẫu, ${res.importedCategories} danh mục.`
       );
     } catch (err) {
       setStatusKind('error');
@@ -503,7 +497,7 @@ export function BackupView({
                         </span>
                       </p>
                       <p className="text-zinc-500 dark:text-zinc-400 tabular-nums">
-                        Nội dung: {autoBackupStatus.imageCount} ảnh · {autoBackupStatus.categoryCount} danh mục · {autoBackupStatus.orderCount} đơn hàng · Dung lượng {formatFileSize(autoBackupStatus.sizeBytes)}
+                        Nội dung: {autoBackupStatus.imageCount} ảnh · {autoBackupStatus.categoryCount} danh mục · Dung lượng {formatFileSize(autoBackupStatus.sizeBytes)}
                       </p>
                       {autoBackupStatus.nextBackupAt && (
                         <p className="text-zinc-500 dark:text-zinc-400">

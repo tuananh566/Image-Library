@@ -1253,7 +1253,7 @@ export function SettingsModal({
                         ) : null}
                       </div>
                       <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-                        Kéo mã nguồn mới nhất từ GitHub và giữ nguyên toàn bộ dữ liệu trên server (ảnh, danh mục, đơn hàng, thiết bị quen thuộc).
+                        Kéo mã nguồn mới nhất từ GitHub và giữ nguyên toàn bộ dữ liệu trên server (ảnh, danh mục, thiết bị quen thuộc).
                       </p>
                     </div>
 
@@ -1382,7 +1382,6 @@ export function SettingsModal({
                         <span className="text-zinc-500 tabular-nums dark:text-zinc-400">
                           Đang bảo vệ: {githubStatus.preservedData.images} ảnh ·{' '}
                           {githubStatus.preservedData.categories} danh mục ·{' '}
-                          {githubStatus.preservedData.orders} đơn hàng ·{' '}
                           {githubStatus.preservedData.devices} thiết bị
                         </span>
                       )}
@@ -1451,8 +1450,7 @@ export function SettingsModal({
                           </p>
                           <p className="opacity-90">
                             Dữ liệu giữ nguyên: {githubResult.preservedData.images} ảnh,{' '}
-                            {githubResult.preservedData.categories} danh mục,{' '}
-                            {githubResult.preservedData.orders} đơn hàng và{' '}
+                            {githubResult.preservedData.categories} danh mục và{' '}
                             {githubResult.preservedData.devices} thiết bị quen thuộc.
                           </p>
                           {githubResult.serverChanged && (
@@ -1683,7 +1681,6 @@ export function SettingsModal({
                     <option value="device">Thiết bị</option>
                     <option value="image">Ảnh mẫu</option>
                     <option value="category">Danh mục</option>
-                    <option value="order">Đơn hàng</option>
                     <option value="backup">Sao lưu / Khôi phục</option>
                     <option value="github">GitHub</option>
                     <option value="http">HTTP khác</option>
