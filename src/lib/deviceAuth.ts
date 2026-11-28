@@ -177,6 +177,7 @@ export function clearStoredDeviceToken(): void {
   if (typeof window === 'undefined') return;
   try {
     localStorage.removeItem(DEVICE_TOKEN_KEY);
+    localStorage.removeItem('khoanh_vault_snapshot_v1');
   } catch {
     // Ignore storage errors
   }

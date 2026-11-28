@@ -188,9 +188,54 @@ async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promi
   return assertOk(await fetch(input, { ...init, headers }));
 }
 
+const VAULT_SNAPSHOT_KEY = 'khoanh_vault_snapshot_v1';
+
+export function readCachedVaultSnapshot(): ServerVaultResponse | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(VAULT_SNAPSHOT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ServerVaultResponse>;
+    if (!Array.isArray(parsed.categories) || !Array.isArray(parsed.images)) {
+      return null;
+    }
+    return {
+      categories: parsed.categories,
+      images: parsed.images.map(hydrateImageUrls),
+      seeded: Boolean(parsed.seeded),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function writeCachedVaultSnapshot(vault: ServerVaultResponse): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const snapshot: ServerVaultResponse = {
+      categories: vault.categories,
+      images: vault.images.slice(0, 1500),
+      seeded: vault.seeded,
+    };
+    localStorage.setItem(VAULT_SNAPSHOT_KEY, JSON.stringify(snapshot));
+  } catch {
+    // Ignore Safari private mode or storage quota errors
+  }
+}
+
+export function clearCachedVaultSnapshot(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.removeItem(VAULT_SNAPSHOT_KEY);
+  } catch {
+    // Ignore storage errors
+  }
+}
+
 export async function fetchServerVault(): Promise<ServerVaultResponse> {
-  const res = await apiFetch('/api/vault', { cache: 'no-store' });
+  const res = await apiFetch('/api/vault', { cache: 'no-cache' });
   const data = await parseJsonResponse<ServerVaultResponse>(res);
+  writeCachedVaultSnapshot(data);
   return {
     ...data,
     images: (data.images || []).map(hydrateImageUrls),
@@ -306,6 +351,7 @@ export async function deleteServerImages(ids: string[]): Promise<void> {
 
 export async function clearServerVault(): Promise<void> {
   await apiFetch('/api/vault', { method: 'DELETE' });
+  clearCachedVaultSnapshot();
 }
 
 export async function exportServerBackup(): Promise<VaultBackupBundle> {
@@ -504,8 +550,11 @@ export async function importServerBackupFile(
   }
 }
 
-export async function seedServerSampleVault(force = false): Promise<boolean> {
-  const current = await fetchServerVault();
+export async function seedServerSampleVault(
+  force = false,
+  existingVault?: ServerVaultResponse
+): Promise<boolean> {
+  const current = existingVault ?? (await fetchServerVault());
   if (!force && (current.seeded || current.images.length > 0 || current.categories.length > 0)) {
     return false;
   }

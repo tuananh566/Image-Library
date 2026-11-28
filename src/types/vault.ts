@@ -38,7 +38,14 @@ export interface VaultImageRecord {
   thumbnailBlob: Blob;
 }
 
-export interface VaultImageView extends Omit<VaultImageRecord, 'blob' | 'thumbnailBlob'> {
+export interface VaultImageView
+  extends Omit<
+    VaultImageRecord,
+    'blob' | 'thumbnailBlob' | 'tags' | 'dominantColors' | 'colorFamilies'
+  > {
+  tags?: string[];
+  dominantColors?: string[];
+  colorFamilies?: string[];
   thumbnailUrl: string;
   fullUrl?: string;
 }

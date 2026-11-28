@@ -40,7 +40,8 @@ interface ImageInspectorModalProps {
 
 const MIN_SCALE = 1;
 const MAX_SCALE = 4;
-const PRELOAD_NEAREST_COUNT = 5;
+const PRELOAD_NEAREST_COUNT = 2;
+const FILMSTRIP_HALF_WINDOW = 24;
 
 interface PreloadedPreviewEntry {
   fullUrl: string;
@@ -221,6 +222,15 @@ function ImageInspectorContent({
     () => new Set(nearestImages.map((item) => item.id)),
     [nearestImages]
   );
+  const filmstripWindow = useMemo(() => {
+    const activeIndex = images.findIndex((item) => item.id === image.id);
+    if (activeIndex === -1 || images.length <= FILMSTRIP_HALF_WINDOW * 2 + 1) {
+      return images;
+    }
+    const start = Math.max(0, activeIndex - FILMSTRIP_HALF_WINDOW);
+    const end = Math.min(images.length, activeIndex + FILMSTRIP_HALF_WINDOW + 1);
+    return images.slice(start, end);
+  }, [images, image.id]);
 
   useEffect(() => {
     if (!image) {
@@ -317,7 +327,7 @@ function ImageInspectorContent({
     };
   }, [image?.id, image?.fullUrl, applyTransform]);
 
-  // Preload only the 5 nearest images to the active previewed image (and evict far ones) to prevent lag
+  // Delay neighbor full-res preloads briefly so the active image finishes loading first on iOS Safari
   useEffect(() => {
     if (!image) return;
 
@@ -337,60 +347,50 @@ function ImageInspectorContent({
       }
     }
 
-    for (const neighbor of nearestImages) {
-      const existing = cache.get(neighbor.id);
-      if (existing && (!neighbor.fullUrl || existing.fullUrl === neighbor.fullUrl)) {
-        continue;
-      }
-      if (existing?.isObjectUrl && existing.fullUrl) {
-        URL.revokeObjectURL(existing.fullUrl);
-      }
+    const timerId = window.setTimeout(() => {
+      for (const neighbor of nearestImages) {
+        const existing = cache.get(neighbor.id);
+        if (existing && (!neighbor.fullUrl || existing.fullUrl === neighbor.fullUrl)) {
+          continue;
+        }
+        if (existing?.isObjectUrl && existing.fullUrl) {
+          URL.revokeObjectURL(existing.fullUrl);
+        }
 
-      let thumbImg: HTMLImageElement | undefined;
-      if (neighbor.thumbnailUrl) {
-        thumbImg = new Image();
-        thumbImg.decoding = 'async';
-        thumbImg.referrerPolicy = 'no-referrer';
-        thumbImg.src = neighbor.thumbnailUrl;
-      }
-
-      if (neighbor.fullUrl) {
-        const fullImg = new Image();
-        fullImg.decoding = 'async';
-        fullImg.referrerPolicy = 'no-referrer';
-        fullImg.onload = () => {
-          void fullImg.decode?.().catch(() => {});
-        };
-        fullImg.src = neighbor.fullUrl;
-        cache.set(neighbor.id, {
-          fullUrl: neighbor.fullUrl,
-          isObjectUrl: false,
-          fullImg,
-          thumbImg,
-        });
-      } else {
-        const entry: PreloadedPreviewEntry = {
-          fullUrl: '',
-          isObjectUrl: false,
-          thumbImg,
-          cancelled: false,
-        };
-        cache.set(neighbor.id, entry);
-        getImageById(neighbor.id).then((rec) => {
-          if (entry.cancelled || !rec) return;
-          const objectUrl = URL.createObjectURL(rec.blob);
+        if (neighbor.fullUrl) {
           const fullImg = new Image();
           fullImg.decoding = 'async';
-          fullImg.onload = () => {
-            void fullImg.decode?.().catch(() => {});
+          fullImg.referrerPolicy = 'no-referrer';
+          fullImg.src = neighbor.fullUrl;
+          cache.set(neighbor.id, {
+            fullUrl: neighbor.fullUrl,
+            isObjectUrl: false,
+            fullImg,
+          });
+        } else {
+          const entry: PreloadedPreviewEntry = {
+            fullUrl: '',
+            isObjectUrl: false,
+            cancelled: false,
           };
-          fullImg.src = objectUrl;
-          entry.fullUrl = objectUrl;
-          entry.isObjectUrl = true;
-          entry.fullImg = fullImg;
-        });
+          cache.set(neighbor.id, entry);
+          getImageById(neighbor.id).then((rec) => {
+            if (entry.cancelled || !rec) return;
+            const objectUrl = URL.createObjectURL(rec.blob);
+            const fullImg = new Image();
+            fullImg.decoding = 'async';
+            fullImg.src = objectUrl;
+            entry.fullUrl = objectUrl;
+            entry.isObjectUrl = true;
+            entry.fullImg = fullImg;
+          });
+        }
       }
-    }
+    }, 180);
+
+    return () => {
+      window.clearTimeout(timerId);
+    };
   }, [image?.id, nearestImages]);
 
   useEffect(() => {
@@ -822,7 +822,7 @@ function ImageInspectorContent({
             type="button"
             onClick={onClose}
             aria-label="Đóng trình xem ảnh"
-            className="absolute left-4 top-[calc(1rem+var(--app-safe-top))] z-20 inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/15 bg-zinc-900/75 text-zinc-100 shadow-lg backdrop-blur-xl transition-colors hover:bg-zinc-800"
+            className="absolute left-4 top-[calc(1rem+var(--app-safe-top))] z-20 inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/15 bg-zinc-900/90 text-zinc-100 shadow-lg transition-colors hover:bg-zinc-800"
           >
             <X className="h-5 w-5" />
           </button>
@@ -913,7 +913,7 @@ function ImageInspectorContent({
             transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
             className="absolute bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-1/2 z-20 flex w-max max-w-[calc(100%-2rem)] -translate-x-1/2 flex-col items-center gap-2.5"
           >
-            {images.length > 0 && (
+            {filmstripWindow.length > 0 && (
               <div
                 aria-label="Danh sách ảnh thu nhỏ"
                 onWheel={(e) => {
@@ -924,9 +924,9 @@ function ImageInspectorContent({
                 }}
                 onTouchStart={(e) => e.stopPropagation()}
                 onTouchMove={(e) => e.stopPropagation()}
-                className="flex max-w-full items-center gap-1.5 overflow-x-auto rounded-2xl border border-white/10 bg-zinc-900/65 p-1.5 shadow-xl backdrop-blur-xl [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                className="flex max-w-full items-center gap-1.5 overflow-x-auto rounded-2xl border border-white/10 bg-zinc-900/85 p-1.5 shadow-xl [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
               >
-                {images.map((item) => {
+                {filmstripWindow.map((item) => {
                   const isActive = item.id === image.id;
                   const isNearActive = isActive || nearestIdSet.has(item.id);
                   return (
@@ -959,7 +959,7 @@ function ImageInspectorContent({
             )}
 
             {canManage && confirmDelete ? (
-              <div className="inline-flex h-12 items-center gap-2 rounded-full border border-white/15 bg-zinc-900/85 px-4 text-xs text-white shadow-2xl backdrop-blur-xl whitespace-nowrap">
+              <div className="inline-flex h-12 items-center gap-2 rounded-full border border-white/15 bg-zinc-900/95 px-4 text-xs text-white shadow-2xl whitespace-nowrap">
                 <span className="font-medium text-rose-300">Xóa ảnh này?</span>
                 <button
                   type="button"
@@ -977,7 +977,7 @@ function ImageInspectorContent({
                 </button>
               </div>
             ) : (
-              <div className="inline-flex h-12 max-w-full items-center rounded-full border border-white/15 bg-zinc-900/75 p-1 text-zinc-100 shadow-2xl backdrop-blur-xl">
+              <div className="inline-flex h-12 max-w-full items-center rounded-full border border-white/15 bg-zinc-900/90 p-1 text-zinc-100 shadow-2xl">
                 {canManage && (
                   <>
                     <button

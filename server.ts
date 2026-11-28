@@ -132,10 +132,19 @@ function resolveSafeChild(baseDir: string, fileName: string): string | null {
 let storageDirsEnsured = false;
 let cachedVault: VaultDataFile | null = null;
 let cachedImageById = new Map<string, ServerImageRecord>();
+let vaultRevision = 0;
+let cachedVaultPayload: {
+  rev: number;
+  etag: string;
+  json: string;
+  gzipBuffer: Buffer;
+} | null = null;
 
 function updateVaultCache(data: VaultDataFile): VaultDataFile {
   cachedVault = data;
   cachedImageById = new Map(data.images.map((img) => [img.id, img]));
+  vaultRevision += 1;
+  cachedVaultPayload = null;
   return data;
 }
 
@@ -663,7 +672,15 @@ function toPublicDevice(rec: TrustedDeviceRecord, currentDeviceId?: string) {
 const verifyFailuresByIp = new Map<string, { count: number; resetAt: number }>();
 
 function toClientImage(rec: ServerImageRecord) {
-  const { storedFile: _sf, storedThumbFile: _stf, ...rest } = rec;
+  const {
+    storedFile: _sf,
+    storedThumbFile: _stf,
+    thumbMimeType: _tm,
+    tags: _tags,
+    dominantColors: _dc,
+    colorFamilies: _cf,
+    ...rest
+  } = rec;
   const v = rec.updatedAt || rec.createdAt || 1;
   return {
     ...rest,
@@ -2107,13 +2124,23 @@ async function startServer() {
         needsSystemUpgrade ||
         needsModelUpgrade
       ) {
-        currentRecord = await withDevicesLock(async (file) => {
+        const upgradedName =
+          !matched.deviceName && detectedModel && isGenericDeviceLabel(matched.label)
+            ? detectedModel
+            : matched.deviceName || matched.label;
+        matched.lastSeenAt = now;
+        matched.lastIp = ip;
+        matched.label = upgradedName;
+        matched.deviceName = upgradedName;
+        if (!matched.systemInfo && systemSummary) {
+          matched.systemInfo = systemSummary;
+        }
+        currentRecord = matched;
+
+        // Persist device lastSeen/metadata asynchronously so iOS/Safari status checks return immediately
+        void withDevicesLock(async (file) => {
           const found = file.devices.find((d) => d.id === matched.id);
           if (!found) return { result: matched };
-          const upgradedName =
-            !found.deviceName && detectedModel && isGenericDeviceLabel(found.label)
-              ? detectedModel
-              : found.deviceName || found.label;
           const updated: TrustedDeviceRecord = {
             ...found,
             label: upgradedName,
@@ -2130,7 +2157,7 @@ async function startServer() {
             },
             result: updated,
           };
-        });
+        }).catch(() => {});
       }
 
       setDeviceTokenCookie(req, res, token);
@@ -2769,35 +2796,54 @@ async function startServer() {
     });
   });
 
-  // Read full vault metadata (gzip-compressed when client supports it)
+  // Read full vault metadata (pre-cached gzip + ETag 304 for fast iOS/Safari revalidation)
   app.get('/api/vault', async (req, res, next) => {
     try {
       const vault = await readVaultFile();
-      const categories = [...vault.categories].sort(
-        (a, b) => a.order - b.order || a.createdAt - b.createdAt
-      );
-      const images = [...vault.images]
-        .sort((a, b) => b.createdAt - a.createdAt)
-        .map(toClientImage);
+      if (!cachedVaultPayload || cachedVaultPayload.rev !== vaultRevision) {
+        const categories = [...vault.categories].sort(
+          (a, b) => a.order - b.order || a.createdAt - b.createdAt
+        );
+        const images = [...vault.images]
+          .sort((a, b) => b.createdAt - a.createdAt)
+          .map(toClientImage);
 
-      const json = JSON.stringify({
-        categories,
-        images,
-        seeded: vault.seeded,
-      });
+        const json = JSON.stringify({
+          categories,
+          images,
+          seeded: vault.seeded,
+        });
+        const gzipBuffer = await gzipAsync(Buffer.from(json, 'utf8'), { level: 5 });
+        const etag = `W/"vault-${SERVER_BOOT_ID.slice(0, 8)}-${vaultRevision}"`;
+        cachedVaultPayload = {
+          rev: vaultRevision,
+          etag,
+          json,
+          gzipBuffer,
+        };
+      }
+
+      const payload = cachedVaultPayload;
+      res.setHeader('ETag', payload.etag);
+      res.setHeader('Cache-Control', 'private, no-cache');
+      res.setHeader('Vary', 'Accept-Encoding');
+
+      const ifNoneMatch = String(req.headers['if-none-match'] || '').trim();
+      if (ifNoneMatch && ifNoneMatch === payload.etag) {
+        res.status(304).end();
+        return;
+      }
 
       const acceptEncoding = String(req.headers['accept-encoding'] || '');
-      if (json.length > 1024 && acceptEncoding.includes('gzip')) {
-        const compressed = await gzipAsync(Buffer.from(json, 'utf8'), { level: 4 });
+      if (payload.json.length > 1024 && acceptEncoding.includes('gzip')) {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.setHeader('Content-Encoding', 'gzip');
-        res.setHeader('Vary', 'Accept-Encoding');
-        res.send(compressed);
+        res.send(payload.gzipBuffer);
         return;
       }
 
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      res.send(json);
+      res.send(payload.json);
     } catch (err) {
       next(err);
     }
@@ -3975,6 +4021,82 @@ async function startServer() {
 
   if (process.env.NODE_ENV === 'production') {
     const distDir = path.resolve(process.cwd(), 'dist');
+    const staticGzipCache = new Map<
+      string,
+      { mtimeMs: number; gzip: Buffer; contentType: string }
+    >();
+    const COMPRESSIBLE_CONTENT_TYPES: Record<string, string> = {
+      '.html': 'text/html; charset=utf-8',
+      '.js': 'application/javascript; charset=utf-8',
+      '.mjs': 'application/javascript; charset=utf-8',
+      '.css': 'text/css; charset=utf-8',
+      '.svg': 'image/svg+xml; charset=utf-8',
+      '.json': 'application/json; charset=utf-8',
+      '.webmanifest': 'application/manifest+json; charset=utf-8',
+    };
+
+    app.use(async (req, res, next) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        next();
+        return;
+      }
+      const acceptEncoding = String(req.headers['accept-encoding'] || '');
+      if (!acceptEncoding.includes('gzip')) {
+        next();
+        return;
+      }
+      const urlPath = req.path === '/' ? '/index.html' : req.path;
+      const ext = path.extname(urlPath).toLowerCase();
+      const contentType = COMPRESSIBLE_CONTENT_TYPES[ext];
+      if (!contentType) {
+        next();
+        return;
+      }
+      const candidatePath = path.resolve(distDir, '.' + urlPath);
+      if (!candidatePath.startsWith(distDir + path.sep) && candidatePath !== distDir) {
+        next();
+        return;
+      }
+      try {
+        const stat = await fsp.stat(candidatePath);
+        if (!stat.isFile() || stat.size < 1024 || stat.size > 10 * 1024 * 1024) {
+          next();
+          return;
+        }
+        let cached = staticGzipCache.get(candidatePath);
+        if (!cached || cached.mtimeMs !== stat.mtimeMs) {
+          const raw = await fsp.readFile(candidatePath);
+          const gzip = await gzipAsync(raw, { level: 6 });
+          cached = { mtimeMs: stat.mtimeMs, gzip, contentType };
+          staticGzipCache.set(candidatePath, cached);
+        }
+        const etag = `W/"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
+        res.setHeader('ETag', etag);
+        res.setHeader('Vary', 'Accept-Encoding');
+        if (ext === '.html') {
+          res.setHeader('Cache-Control', 'no-cache');
+        } else if (candidatePath.includes(`${path.sep}assets${path.sep}`)) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        } else {
+          res.setHeader('Cache-Control', 'public, max-age=86400');
+        }
+        if (String(req.headers['if-none-match'] || '').trim() === etag) {
+          res.status(304).end();
+          return;
+        }
+        res.setHeader('Content-Type', cached.contentType);
+        res.setHeader('Content-Encoding', 'gzip');
+        res.setHeader('Content-Length', String(cached.gzip.length));
+        if (req.method === 'HEAD') {
+          res.status(200).end();
+          return;
+        }
+        res.send(cached.gzip);
+      } catch {
+        next();
+      }
+    });
+
     app.use(
       express.static(distDir, {
         maxAge: '30d',
@@ -4150,6 +4272,8 @@ async function startServer() {
   };
 
   httpServer = await listenWithRetry();
+  httpServer.keepAliveTimeout = 65_000;
+  httpServer.headersTimeout = 66_000;
   await writePortLockFile();
 
   let isShuttingDown = false;

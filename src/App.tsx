@@ -1,16 +1,13 @@
 import { Smartphone, Upload } from 'lucide-react';
 import { AnimatePresence, MotionConfig, motion } from 'motion/react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BatchActionBar } from './components/BatchActionBar';
 import { CategoriesView } from './components/CategoriesView';
 import { DeviceVerificationGate } from './components/DeviceVerificationGate';
 import { FloatingAddButton } from './components/FloatingAddButton';
 import { GalleryGrid } from './components/GalleryGrid';
-import { ImageInspectorModal } from './components/ImageInspectorModal';
-import { SettingsModal } from './components/SettingsModal';
 import { DEFAULT_SIDEBAR_STEP, Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
-import { UploadModal } from './components/UploadModal';
 import {
   clearAdminSession,
   getAdminExpiresAt,
@@ -22,6 +19,7 @@ import {
 import {
   attachDeviceTokenToUrl,
   checkDeviceStatus,
+  getStoredDeviceToken,
   subscribeDeviceUnauthorized,
   type TrustedDeviceInfo,
 } from './lib/deviceAuth';
@@ -42,6 +40,7 @@ import {
   fetchServerVault,
   getPendingLocalSyncCount,
   importServerBackupFile,
+  readCachedVaultSnapshot,
   reorderServerCategories,
   restoreFromAutoBackup,
   saveServerCategory,
@@ -51,6 +50,22 @@ import {
   uploadServerImagesBatch,
   type BackupImportProgress,
 } from './lib/serverVault';
+
+const ImageInspectorModal = lazy(() =>
+  import('./components/ImageInspectorModal').then((m) => ({
+    default: m.ImageInspectorModal,
+  }))
+);
+const SettingsModal = lazy(() =>
+  import('./components/SettingsModal').then((m) => ({
+    default: m.SettingsModal,
+  }))
+);
+const UploadModal = lazy(() =>
+  import('./components/UploadModal').then((m) => ({
+    default: m.UploadModal,
+  }))
+);
 import { filterAndScoreImages } from './lib/smartSearch';
 import type {
   AppTab,
@@ -93,16 +108,28 @@ export default function App() {
   );
   const isAdmin = adminExpiresAt !== null;
 
-  const [deviceGateState, setDeviceGateState] = useState<'checking' | 'unverified' | 'trusted'>('checking');
+  const initialBoot = useMemo(() => {
+    const hasToken = Boolean(getStoredDeviceToken());
+    const snapshot = hasToken ? readCachedVaultSnapshot() : null;
+    return { hasToken, snapshot };
+  }, []);
+
+  const [deviceGateState, setDeviceGateState] = useState<'checking' | 'unverified' | 'trusted'>(
+    () => (initialBoot.hasToken ? 'trusted' : 'checking')
+  );
   const [detectedDeviceLabel, setDetectedDeviceLabel] = useState('');
   const [detectedDeviceModel, setDetectedDeviceModel] = useState('');
   const [detectedSystemSummary, setDetectedSystemSummary] = useState('');
   const [currentDevice, setCurrentDevice] = useState<TrustedDeviceInfo | null>(null);
   const [deviceDenyReason, setDeviceDenyReason] = useState<string | undefined>(undefined);
 
-  const [isLoading, setIsLoading] = useState(true);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [images, setImages] = useState<VaultImageView[]>([]);
+  const [isLoading, setIsLoading] = useState(() => !initialBoot.snapshot);
+  const [categories, setCategories] = useState<Category[]>(
+    () => initialBoot.snapshot?.categories ?? []
+  );
+  const [images, setImages] = useState<VaultImageView[]>(
+    () => initialBoot.snapshot?.images ?? []
+  );
   const [pendingLocalSync, setPendingLocalSync] = useState<{
     categories: number;
     images: number;
@@ -128,6 +155,7 @@ export default function App() {
   const mobileEdgeTouchStartRef = useRef<{ x: number; y: number } | null>(null);
 
   const [inspectedImageId, setInspectedImageId] = useState<string | null>(null);
+  const [hasOpenedInspector, setHasOpenedInspector] = useState(false);
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
@@ -288,13 +316,6 @@ export default function App() {
       }
     };
 
-    const handleTouchMove = (e: TouchEvent) => {
-      if (e.touches.length <= 1) return;
-      const target = e.target as HTMLElement | null;
-      if (target?.closest('[data-image-stage="true"]')) return;
-      e.preventDefault();
-    };
-
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey)) return;
       if (
@@ -318,7 +339,6 @@ export default function App() {
     document.addEventListener('gesturechange', preventGesture, { passive: false });
     document.addEventListener('gestureend', preventGesture, { passive: false });
     document.addEventListener('wheel', handleWheel, { passive: false });
-    document.addEventListener('touchmove', handleTouchMove, { passive: false });
     window.addEventListener('keydown', handleKeyDown);
 
     return () => {
@@ -326,7 +346,6 @@ export default function App() {
       document.removeEventListener('gesturechange', preventGesture);
       document.removeEventListener('gestureend', preventGesture);
       document.removeEventListener('wheel', handleWheel);
-      document.removeEventListener('touchmove', handleTouchMove);
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, []);
@@ -377,27 +396,41 @@ export default function App() {
   const lastFocusRefreshAtRef = useRef(0);
   const localSyncEmptyRef = useRef(false);
 
-  const reloadVault = useCallback(async () => {
+  const reloadVault = useCallback(async (allowInitialSeed = false) => {
     if (reloadInFlightRef.current) {
       return reloadInFlightRef.current;
     }
 
     const task = (async () => {
       try {
-        const vault = await fetchServerVault();
+        let vault = await fetchServerVault();
+        if (
+          allowInitialSeed &&
+          !vault.seeded &&
+          vault.images.length === 0 &&
+          vault.categories.length === 0
+        ) {
+          const didSeed = await seedServerSampleVault(false, vault);
+          if (didSeed) {
+            vault = await fetchServerVault();
+          }
+        }
         setCategories(vault.categories);
         setImages(vault.images);
-        if (!localSyncEmptyRef.current) {
-          const pending = await getPendingLocalSyncCount(
-            new Set(vault.categories.map((c) => c.id)),
-            new Set(vault.images.map((i) => i.id))
-          );
-          if (pending.categories === 0 && pending.images === 0) {
-            localSyncEmptyRef.current = true;
-          }
-          setPendingLocalSync(pending);
-        }
         lastReloadDoneAtRef.current = Date.now();
+
+        if (!localSyncEmptyRef.current) {
+          const catIds = new Set(vault.categories.map((c) => c.id));
+          const imgIds = new Set(vault.images.map((i) => i.id));
+          window.setTimeout(() => {
+            void getPendingLocalSyncCount(catIds, imgIds).then((pending) => {
+              if (pending.categories === 0 && pending.images === 0) {
+                localSyncEmptyRef.current = true;
+              }
+              setPendingLocalSync(pending);
+            });
+          }, 900);
+        }
       } finally {
         reloadInFlightRef.current = null;
       }
@@ -410,11 +443,12 @@ export default function App() {
   useEffect(() => {
     if (deviceGateState !== 'trusted') return;
     let active = true;
-    setIsLoading(true);
+    if (!initialBoot.snapshot) {
+      setIsLoading(true);
+    }
     (async () => {
       try {
-        await seedServerSampleVault(false);
-        if (active) await reloadVault();
+        await reloadVault(true);
       } catch {
         // Handled by unauthorized listener if device was revoked
       } finally {
@@ -425,7 +459,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [deviceGateState, reloadVault]);
+  }, [deviceGateState, reloadVault, initialBoot.snapshot]);
 
   // Live cross-device sync via Server-Sent Events + window focus refresh
   useEffect(() => {
@@ -457,7 +491,7 @@ export default function App() {
     const handleVisibilityOrFocus = () => {
       if (document.visibilityState !== 'visible') return;
       const now = Date.now();
-      if (now - lastFocusRefreshAtRef.current < 2500) return;
+      if (now - lastFocusRefreshAtRef.current < 10_000) return;
       lastFocusRefreshAtRef.current = now;
       void verifyCurrentDeviceStatus();
       void reloadVault();
@@ -1047,7 +1081,10 @@ export default function App() {
                                 }
                               : undefined
                           }
-                          onOpenImage={(id) => setInspectedImageId(id)}
+                          onOpenImage={(id) => {
+                            setHasOpenedInspector(true);
+                            setInspectedImageId(id);
+                          }}
                           onOpenUpload={() => {
                             if (!isAdmin) return;
                             setDroppedFiles([]);
@@ -1144,91 +1181,103 @@ export default function App() {
         </main>
       </div>
 
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        isAdmin={isAdmin}
-        adminExpiresAt={adminExpiresAt}
-        currentDevice={currentDevice}
-        onCurrentDeviceUpdated={(updated) => setCurrentDevice(updated)}
-        onAuthenticateAdmin={(password) => {
-          const normalized = password.trim();
-          if (normalized === 'tuananh') {
-            setAdminExpiresAt(grantAdminSession({ unlimited: true }));
-            return true;
-          }
-          if (normalized === 'admin') {
-            setAdminExpiresAt(grantAdminSession());
-            return true;
-          }
-          return false;
-        }}
-        onLogoutAdmin={logoutAdmin}
-        stats={stats}
-        onExportBackup={handleExportBackup}
-        onImportBackup={handleImportBackup}
-        onRestoreAutoBackup={async () => {
-          if (!isAdmin) throw new Error('Admin permission required');
-          const res = await restoreFromAutoBackup();
-          clearAllFilters();
-          await reloadVault();
-          return res;
-        }}
-        onRestoreSampleVault={async () => {
-          if (!isAdmin) return;
-          await seedServerSampleVault(true);
-          await reloadVault();
-        }}
-        onClearAllData={async () => {
-          if (!isAdmin) return;
-          await clearServerVault();
-          clearAllFilters();
-          await reloadVault();
-        }}
-        pendingLocalSync={pendingLocalSync}
-        onSyncLocalToServer={handleSyncLocalToServer}
-      />
+      {isSettingsOpen && (
+        <Suspense fallback={null}>
+          <SettingsModal
+            isOpen={isSettingsOpen}
+            onClose={() => setIsSettingsOpen(false)}
+            isAdmin={isAdmin}
+            adminExpiresAt={adminExpiresAt}
+            currentDevice={currentDevice}
+            onCurrentDeviceUpdated={(updated) => setCurrentDevice(updated)}
+            onAuthenticateAdmin={(password) => {
+              const normalized = password.trim();
+              if (normalized === 'tuananh') {
+                setAdminExpiresAt(grantAdminSession({ unlimited: true }));
+                return true;
+              }
+              if (normalized === 'admin') {
+                setAdminExpiresAt(grantAdminSession());
+                return true;
+              }
+              return false;
+            }}
+            onLogoutAdmin={logoutAdmin}
+            stats={stats}
+            onExportBackup={handleExportBackup}
+            onImportBackup={handleImportBackup}
+            onRestoreAutoBackup={async () => {
+              if (!isAdmin) throw new Error('Admin permission required');
+              const res = await restoreFromAutoBackup();
+              clearAllFilters();
+              await reloadVault();
+              return res;
+            }}
+            onRestoreSampleVault={async () => {
+              if (!isAdmin) return;
+              await seedServerSampleVault(true);
+              await reloadVault();
+            }}
+            onClearAllData={async () => {
+              if (!isAdmin) return;
+              await clearServerVault();
+              clearAllFilters();
+              await reloadVault();
+            }}
+            pendingLocalSync={pendingLocalSync}
+            onSyncLocalToServer={handleSyncLocalToServer}
+          />
+        </Suspense>
+      )}
 
-      <UploadModal
-        isOpen={isAdmin && isUploadOpen}
-        initialFiles={droppedFiles}
-        categories={categories}
-        defaultCategoryId={
-          filters.categoryId !== 'all' && filters.categoryId !== 'uncategorized'
-            ? filters.categoryId
-            : null
-        }
-        onClose={() => {
-          setIsUploadOpen(false);
-          setDroppedFiles([]);
-        }}
-        onCreateCategory={handleQuickCreateCategory}
-        onConfirmUpload={handleConfirmUpload}
-      />
+      {isAdmin && isUploadOpen && (
+        <Suspense fallback={null}>
+          <UploadModal
+            isOpen={isAdmin && isUploadOpen}
+            initialFiles={droppedFiles}
+            categories={categories}
+            defaultCategoryId={
+              filters.categoryId !== 'all' && filters.categoryId !== 'uncategorized'
+                ? filters.categoryId
+                : null
+            }
+            onClose={() => {
+              setIsUploadOpen(false);
+              setDroppedFiles([]);
+            }}
+            onCreateCategory={handleQuickCreateCategory}
+            onConfirmUpload={handleConfirmUpload}
+          />
+        </Suspense>
+      )}
 
-      <ImageInspectorModal
-        image={inspectedImage}
-        images={filmstripImages}
-        categories={categories}
-        hasPrev={inspectedIndex > 0}
-        hasNext={inspectedIndex >= 0 && inspectedIndex < scoredItems.length - 1}
-        onSelectImage={(id) => setInspectedImageId(id)}
-        onPrev={() => {
-          if (inspectedIndex > 0) {
-            setInspectedImageId(scoredItems[inspectedIndex - 1].image.id);
-          }
-        }}
-        onNext={() => {
-          if (inspectedIndex >= 0 && inspectedIndex < scoredItems.length - 1) {
-            setInspectedImageId(scoredItems[inspectedIndex + 1].image.id);
-          }
-        }}
-        onClose={() => setInspectedImageId(null)}
-        onUpdate={handleUpdateImage}
-        onDelete={handleDeleteImage}
-        onCreateCategory={handleQuickCreateCategory}
-        canManage={isAdmin}
-      />
+      {(hasOpenedInspector || inspectedImage !== null) && (
+        <Suspense fallback={null}>
+          <ImageInspectorModal
+            image={inspectedImage}
+            images={filmstripImages}
+            categories={categories}
+            hasPrev={inspectedIndex > 0}
+            hasNext={inspectedIndex >= 0 && inspectedIndex < scoredItems.length - 1}
+            onSelectImage={(id) => setInspectedImageId(id)}
+            onPrev={() => {
+              if (inspectedIndex > 0) {
+                setInspectedImageId(scoredItems[inspectedIndex - 1].image.id);
+              }
+            }}
+            onNext={() => {
+              if (inspectedIndex >= 0 && inspectedIndex < scoredItems.length - 1) {
+                setInspectedImageId(scoredItems[inspectedIndex + 1].image.id);
+              }
+            }}
+            onClose={() => setInspectedImageId(null)}
+            onUpdate={handleUpdateImage}
+            onDelete={handleDeleteImage}
+            onCreateCategory={handleQuickCreateCategory}
+            canManage={isAdmin}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

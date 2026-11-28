@@ -328,8 +328,8 @@ export function GalleryGrid({
                           <ResilientThumbnail
                             src={image.thumbnailUrl}
                             alt={image.title}
-                            priority={index < visibleItems.length}
-                            highFetchPriority={index < 12}
+                            priority={index < 12}
+                            highFetchPriority={index < 6}
                             className="h-full w-full object-cover"
                           />
                         </div>
@@ -425,7 +425,7 @@ export function GalleryGrid({
                   if (!isBatchMode) warmImageUrl(image.fullUrl);
                 }}
                 onPointerDown={(e) => {
-                  if (!isBatchMode) warmImageUrl(image.fullUrl);
+                  if (!isBatchMode && e.pointerType === 'mouse') warmImageUrl(image.fullUrl);
                   handleCardPointerDown(e, image.id);
                 }}
                 onPointerMove={handleCardPointerMove}
@@ -452,8 +452,8 @@ export function GalleryGrid({
                 <ResilientThumbnail
                   src={image.thumbnailUrl}
                   alt={image.title}
-                  priority={index < visibleItems.length}
-                  highFetchPriority={index < 12}
+                  priority={index < 12}
+                  highFetchPriority={index < 6}
                   className={`w-full transition-transform duration-200 group-hover:scale-[1.02] ${
                     isMasonry ? 'h-auto block' : 'h-full object-cover'
                   }`}

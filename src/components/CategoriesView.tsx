@@ -680,8 +680,8 @@ export function CategoriesView({
                       <img
                         src={previewImages[0].thumbnailUrl}
                         alt={cat.name}
-                        loading={idx < 8 ? 'eager' : 'lazy'}
-                        fetchPriority={idx < 4 ? 'high' : undefined}
+                        loading={idx < 4 ? 'eager' : 'lazy'}
+                        fetchPriority={idx < 2 ? 'high' : undefined}
                         decoding="async"
                         draggable={false}
                         className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
@@ -693,8 +693,8 @@ export function CategoriesView({
                             key={img.id}
                             src={img.thumbnailUrl}
                             alt={img.title}
-                            loading={idx < 8 ? 'eager' : 'lazy'}
-                            fetchPriority={idx < 4 ? 'high' : undefined}
+                            loading={idx < 4 ? 'eager' : 'lazy'}
+                            fetchPriority={idx < 2 ? 'high' : undefined}
                             decoding="async"
                             draggable={false}
                             className="h-full w-full object-cover"
@@ -706,8 +706,8 @@ export function CategoriesView({
                         <img
                           src={previewImages[0].thumbnailUrl}
                           alt={previewImages[0].title}
-                          loading={idx < 8 ? 'eager' : 'lazy'}
-                          fetchPriority={idx < 4 ? 'high' : undefined}
+                          loading={idx < 4 ? 'eager' : 'lazy'}
+                          fetchPriority={idx < 2 ? 'high' : undefined}
                           decoding="async"
                           draggable={false}
                           className="row-span-2 h-full w-full object-cover"
@@ -715,7 +715,7 @@ export function CategoriesView({
                         <img
                           src={previewImages[1].thumbnailUrl}
                           alt={previewImages[1].title}
-                          loading={idx < 8 ? 'eager' : 'lazy'}
+                          loading={idx < 4 ? 'eager' : 'lazy'}
                           decoding="async"
                           draggable={false}
                           className="h-full w-full object-cover"
@@ -723,7 +723,7 @@ export function CategoriesView({
                         <img
                           src={previewImages[2].thumbnailUrl}
                           alt={previewImages[2].title}
-                          loading={idx < 8 ? 'eager' : 'lazy'}
+                          loading={idx < 4 ? 'eager' : 'lazy'}
                           decoding="async"
                           draggable={false}
                           className="h-full w-full object-cover"
@@ -738,8 +738,8 @@ export function CategoriesView({
                               <img
                                 src={img.thumbnailUrl}
                                 alt={img.title}
-                                loading={idx < 8 ? 'eager' : 'lazy'}
-                                fetchPriority={idx < 4 && thumbIdx === 0 ? 'high' : undefined}
+                                loading={idx < 4 ? 'eager' : 'lazy'}
+                                fetchPriority={idx < 2 && thumbIdx === 0 ? 'high' : undefined}
                                 decoding="async"
                                 draggable={false}
                                 className="h-full w-full object-cover"
