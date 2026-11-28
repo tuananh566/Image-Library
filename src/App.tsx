@@ -85,25 +85,36 @@ import type {
 
 
 type ViewTransitionState = {
-  mode: 'zoom-in' | 'zoom-out' | 'fade';
+  mode: 'zoom-in' | 'zoom-out' | 'slide-left' | 'slide-right' | 'fade';
   originX: string;
   originY: string;
 };
 
+const DOCK_TAB_ORDER: Record<AppTab, number> = {
+  library: 0,
+  categories: 1,
+  recent: 2,
+};
+
 const VIEW_TRANSITION_VARIANTS = {
   initial: (vt: ViewTransitionState) => {
-    if (vt.mode === 'zoom-in') return { opacity: 0, scale: 0.94 };
-    if (vt.mode === 'zoom-out') return { opacity: 0, scale: 1.05 };
-    return { opacity: 0, scale: 1 };
+    if (vt.mode === 'zoom-in') return { opacity: 0, scale: 0.94, x: 0 };
+    if (vt.mode === 'zoom-out') return { opacity: 0, scale: 1.05, x: 0 };
+    if (vt.mode === 'slide-left') return { opacity: 0, x: 32, scale: 1 };
+    if (vt.mode === 'slide-right') return { opacity: 0, x: -32, scale: 1 };
+    return { opacity: 0, scale: 1, x: 0 };
   },
   animate: {
     opacity: 1,
     scale: 1,
+    x: 0,
   },
   exit: (vt: ViewTransitionState) => {
-    if (vt.mode === 'zoom-in') return { opacity: 0, scale: 1.04 };
-    if (vt.mode === 'zoom-out') return { opacity: 0, scale: 0.95 };
-    return { opacity: 0, scale: 1 };
+    if (vt.mode === 'zoom-in') return { opacity: 0, scale: 1.04, x: 0 };
+    if (vt.mode === 'zoom-out') return { opacity: 0, scale: 0.95, x: 0 };
+    if (vt.mode === 'slide-left') return { opacity: 0, x: -24, scale: 1 };
+    if (vt.mode === 'slide-right') return { opacity: 0, x: 24, scale: 1 };
+    return { opacity: 0, scale: 1, x: 0 };
   },
 };
 
@@ -993,7 +1004,7 @@ export default function App() {
             )}
           <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
             <MotionConfig reducedMotion="user">
-              <AnimatePresence mode="wait" initial={false} custom={viewTransition}>
+              <AnimatePresence mode="popLayout" initial={false} custom={viewTransition}>
                 <motion.div
                   key={`${activeTab}:${filters.categoryId}`}
                   custom={viewTransition}
@@ -1001,7 +1012,7 @@ export default function App() {
                   initial="initial"
                   animate="animate"
                   exit="exit"
-                  transition={{ duration: 0.12, ease: [0.22, 1, 0.36, 1] }}
+                  transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
                   style={{
                     transformOrigin: `${viewTransition.originX} ${viewTransition.originY}`,
                   }}
@@ -1144,7 +1155,7 @@ export default function App() {
                         <button
                           type="button"
                           onClick={() => {
-                            setViewTransition({ mode: 'fade', originX: '50%', originY: '50%' });
+                            setViewTransition({ mode: 'slide-right', originX: '50%', originY: '50%' });
                             setActiveTab('categories');
                           }}
                           className="mt-5 inline-flex h-9 items-center gap-2 rounded-lg bg-zinc-100 px-4 text-xs font-semibold text-zinc-950 transition-colors hover:bg-white sm:text-sm"
@@ -1226,7 +1237,7 @@ export default function App() {
                         setInspectedImageId(id);
                       }}
                       onOpenRecentTab={() => {
-                        setViewTransition({ mode: 'fade', originX: '50%', originY: '50%' });
+                        setViewTransition({ mode: 'slide-left', originX: '50%', originY: '50%' });
                         setActiveTab('recent');
                       }}
                       onCreateCategory={handleFullCreateCategory}
@@ -1303,7 +1314,28 @@ export default function App() {
             : activeTab
         }
         onSelectTab={(tab) => {
-          setViewTransition({ mode: 'fade', originX: '50%', originY: '50%' });
+          const currentDockTab: AppTab =
+            activeTab === 'library' && filters.categoryId !== 'all'
+              ? 'categories'
+              : activeTab;
+
+          if (tab === 'categories' && activeTab === 'library' && filters.categoryId !== 'all') {
+            const origin = lastCategoryOriginRef.current;
+            setViewTransition({
+              mode: 'zoom-out',
+              originX: origin.originX,
+              originY: origin.originY,
+            });
+          } else if (tab !== currentDockTab) {
+            const direction =
+              DOCK_TAB_ORDER[tab] > DOCK_TAB_ORDER[currentDockTab]
+                ? 'slide-left'
+                : 'slide-right';
+            setViewTransition({ mode: direction, originX: '50%', originY: '50%' });
+          } else {
+            setViewTransition({ mode: 'fade', originX: '50%', originY: '50%' });
+          }
+
           if (tab === 'library') {
             setFilters((prev) => ({ ...prev, categoryId: 'all' }));
           }
@@ -1317,7 +1349,7 @@ export default function App() {
             categoryId: q.trim() !== '' && activeTab !== 'library' ? 'all' : prev.categoryId,
           }));
           if (q.trim() !== '' && activeTab !== 'library') {
-            setViewTransition({ mode: 'fade', originX: '50%', originY: '50%' });
+            setViewTransition({ mode: 'slide-right', originX: '50%', originY: '50%' });
             setActiveTab('library');
           }
         }}

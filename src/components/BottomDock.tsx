@@ -1,4 +1,5 @@
 import { History, Images, Search, X } from 'lucide-react';
+import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import { useEffect, useRef } from 'react';
 import type { AppTab } from '../types/vault';
 
@@ -112,95 +113,112 @@ export function BottomDock({
   ];
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-40 flex flex-col items-center gap-2 px-3 sm:bottom-5">
-      {isSearchOpen && (
-        <div className="pointer-events-auto w-full max-w-md rounded-full border border-zinc-700/75 bg-zinc-900/85 p-1.5 shadow-xl backdrop-blur-xl">
-          <div className="flex items-center gap-2 pl-3 pr-1">
-            <Search className="h-4 w-4 shrink-0 text-zinc-400" />
-            <input
-              ref={searchInputRef}
-              type="search"
-              value={searchQuery}
-              onChange={(e) => onSearchQueryChange(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') {
-                  onCloseSearch();
-                }
-              }}
-              placeholder="Tìm tên mẫu, ghi chú, album..."
-              aria-label="Tìm kiếm ảnh mẫu"
-              className="h-9 min-w-0 flex-1 bg-transparent text-sm text-zinc-100 placeholder:text-zinc-400 focus:outline-none [&::-webkit-search-cancel-button]:hidden"
-            />
-            {hasQuery && (
-              <button
-                type="button"
-                onClick={onClearSearch}
-                className="shrink-0 rounded-full px-2.5 py-1 text-xs font-medium text-zinc-300 hover:bg-zinc-800 hover:text-white"
-              >
-                Xóa
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={onCloseSearch}
-              aria-label="Đóng tìm kiếm"
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-zinc-300 hover:bg-zinc-800 hover:text-white"
+    <MotionConfig reducedMotion="user">
+      <div className="pointer-events-none fixed inset-x-0 bottom-[max(0.25rem,calc(env(safe-area-inset-bottom)*0.55))] z-40 flex flex-col items-center gap-1.5 px-2 sm:bottom-2 sm:px-3">
+        <AnimatePresence>
+          {isSearchOpen && (
+            <motion.div
+              initial={{ opacity: 0, y: 10, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 8, scale: 0.97 }}
+              transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+              className="pointer-events-auto w-full max-w-md rounded-full border border-zinc-700/75 bg-zinc-900/85 p-1.5 shadow-xl backdrop-blur-xl"
             >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      )}
+              <div className="flex items-center gap-2 pl-3 pr-1">
+                <Search className="h-4 w-4 shrink-0 text-zinc-400" />
+                <input
+                  ref={searchInputRef}
+                  type="search"
+                  value={searchQuery}
+                  onChange={(e) => onSearchQueryChange(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      onCloseSearch();
+                    }
+                  }}
+                  placeholder="Tìm tên mẫu, ghi chú, album..."
+                  aria-label="Tìm kiếm ảnh mẫu"
+                  className="h-9 min-w-0 flex-1 bg-transparent text-sm text-zinc-100 placeholder:text-zinc-400 focus:outline-none [&::-webkit-search-cancel-button]:hidden"
+                />
+                {hasQuery && (
+                  <button
+                    type="button"
+                    onClick={onClearSearch}
+                    className="shrink-0 rounded-full px-2.5 py-1 text-xs font-medium text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                  >
+                    Xóa
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={onCloseSearch}
+                  aria-label="Đóng tìm kiếm"
+                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-      <div className="flex max-w-full items-center justify-center gap-2.5 sm:gap-3">
-        {/* Main Dark Frosted Dock */}
-        <nav
-          aria-label="Mục lục điều hướng"
-          className="pointer-events-auto flex items-center gap-1 rounded-full border border-zinc-700/75 bg-zinc-900/80 p-1 shadow-xl backdrop-blur-xl"
-        >
-          {tabs.map((tab) => {
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => onSelectTab(tab.id)}
-                aria-current={isActive ? 'page' : undefined}
-                className={`flex min-h-[48px] min-w-[80px] shrink-0 flex-col items-center justify-center gap-0.5 whitespace-nowrap rounded-full px-3.5 py-1.5 transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 sm:min-w-[94px] sm:px-5 ${
-                  isActive
-                    ? 'bg-zinc-100 text-zinc-950 shadow-sm'
-                    : 'text-zinc-300 hover:bg-zinc-800/70 hover:text-white'
-                }`}
-              >
-                {tab.renderIcon(isActive)}
-                <span
-                  className={`text-[11px] leading-tight tracking-tight ${
-                    isActive ? 'font-semibold' : 'font-medium'
+        <div className="flex max-w-full items-center justify-center gap-2.5 sm:gap-3">
+          {/* Main Dark Frosted Dock */}
+          <nav
+            aria-label="Mục lục điều hướng"
+            className="pointer-events-auto flex items-center gap-1 rounded-full border border-zinc-700/75 bg-zinc-900/80 p-1 shadow-xl backdrop-blur-xl"
+          >
+            {tabs.map((tab) => {
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => onSelectTab(tab.id)}
+                  aria-current={isActive ? 'page' : undefined}
+                  className={`relative z-10 flex min-h-[48px] min-w-[80px] shrink-0 flex-col items-center justify-center gap-0.5 whitespace-nowrap rounded-full px-3.5 py-1.5 transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 sm:min-w-[94px] sm:px-5 ${
+                    isActive
+                      ? 'text-zinc-950'
+                      : 'text-zinc-300 hover:text-white'
                   }`}
                 >
-                  {tab.label}
-                </span>
-              </button>
-            );
-          })}
-        </nav>
+                  {isActive && (
+                    <motion.span
+                      layoutId="bottom-dock-active-pill"
+                      transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                      className="pointer-events-none absolute inset-0 -z-10 rounded-full bg-zinc-100 shadow-sm"
+                    />
+                  )}
+                  {tab.renderIcon(isActive)}
+                  <span
+                    className={`text-[11px] leading-tight tracking-tight ${
+                      isActive ? 'font-semibold' : 'font-medium'
+                    }`}
+                  >
+                    {tab.label}
+                  </span>
+                </button>
+              );
+            })}
+          </nav>
 
-        {/* Standalone Circular Search Button */}
-        <button
-          type="button"
-          onClick={onToggleSearch}
-          aria-label={isSearchOpen ? 'Đóng tìm kiếm' : 'Tìm kiếm ảnh mẫu'}
-          aria-expanded={isSearchOpen}
-          title="Tìm kiếm"
-          className={`pointer-events-auto inline-flex h-[58px] w-[58px] shrink-0 items-center justify-center rounded-full border shadow-xl backdrop-blur-xl transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 ${
-            searchActive
-              ? 'border-zinc-100 bg-zinc-100 text-zinc-950'
-              : 'border-zinc-700/75 bg-zinc-900/80 text-zinc-200 hover:bg-zinc-800/85 hover:text-white'
-          }`}
-        >
-          <Search className="h-5 w-5" strokeWidth={2.1} />
-        </button>
+          {/* Standalone Circular Search Button */}
+          <button
+            type="button"
+            onClick={onToggleSearch}
+            aria-label={isSearchOpen ? 'Đóng tìm kiếm' : 'Tìm kiếm ảnh mẫu'}
+            aria-expanded={isSearchOpen}
+            title="Tìm kiếm"
+            className={`pointer-events-auto inline-flex h-[58px] w-[58px] shrink-0 items-center justify-center rounded-full border shadow-xl backdrop-blur-xl transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 ${
+              searchActive
+                ? 'border-zinc-100 bg-zinc-100 text-zinc-950'
+                : 'border-zinc-700/75 bg-zinc-900/80 text-zinc-200 hover:bg-zinc-800/85 hover:text-white'
+            }`}
+          >
+            <Search className="h-5 w-5" strokeWidth={2.1} />
+          </button>
+        </div>
       </div>
-    </div>
+    </MotionConfig>
   );
 }
