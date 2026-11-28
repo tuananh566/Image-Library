@@ -527,8 +527,8 @@ export function GalleryGrid({
         ref={itemsContainerRef}
         className={
           isMasonry
-            ? `${masonryColsClass} gap-1.5 md:portrait:gap-2 md:landscape:gap-2`
-            : `grid ${gridColsClass} gap-1.5 md:portrait:gap-2 md:landscape:gap-2`
+            ? `${masonryColsClass} gap-0.5`
+            : `grid ${gridColsClass} gap-0.5`
         }
       >
         {visibleItems.map(({ image }, index) => {
@@ -540,12 +540,8 @@ export function GalleryGrid({
             <article
               key={image.id}
               data-image-card={image.id}
-              className={`group relative overflow-hidden rounded-lg border bg-white transition-[transform,border-color] duration-150 hover:-translate-y-0.5 active:scale-[0.97] dark:bg-zinc-950 ${
-                isMasonry ? 'mb-1.5 break-inside-avoid md:portrait:mb-2 md:landscape:mb-2' : 'flex flex-col'
-              } ${
-                isSelected
-                  ? 'border-blue-600 ring-2 ring-blue-600/35 dark:border-blue-500'
-                  : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-800/80 dark:hover:border-zinc-700'
+              className={`group relative overflow-hidden rounded-[2px] bg-zinc-900 transition-transform duration-150 active:scale-[0.98] ${
+                isMasonry ? 'mb-0.5 break-inside-avoid' : 'flex flex-col'
               }`}
             >
               {/* Image Container */}
@@ -574,10 +570,10 @@ export function GalleryGrid({
                     else onOpenImage(image.id);
                   }
                 }}
-                className={`relative w-full cursor-pointer overflow-hidden bg-zinc-100 focus-visible:outline-2 focus-visible:outline-blue-600 dark:bg-zinc-900 ${
+                className={`relative w-full cursor-pointer overflow-hidden bg-zinc-900 focus-visible:outline-2 focus-visible:outline-blue-600 ${
                   onLongPressSelect ? 'select-none [-webkit-touch-callout:none]' : ''
                 } ${
-                  isMasonry ? '' : 'aspect-[4/3]'
+                  isMasonry ? '' : 'aspect-square'
                 }`}
               >
                 <ResilientThumbnail
@@ -592,11 +588,14 @@ export function GalleryGrid({
                   }`}
                 />
 
-                {/* Hover Scrim & Quick Actions */}
-                <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/20 opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
+                {/* Hover Scrim & Selection Ring */}
+                <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-black/15 opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
+                {isSelected && (
+                  <div className="pointer-events-none absolute inset-0 ring-2 ring-inset ring-[#0A84FF]" />
+                )}
 
                 {isBatchMode && (
-                  <div className="pointer-events-none absolute bottom-2 right-2">
+                  <div className="pointer-events-none absolute bottom-1.5 right-1.5">
                     <span
                       className={`flex h-6 w-6 items-center justify-center rounded-full transition-colors ${
                         isSelected

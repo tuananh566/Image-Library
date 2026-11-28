@@ -1086,15 +1086,15 @@ export default function App() {
                   className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-zinc-950"
                 >
                 {activeTab === 'library' ? (
-                  <div className="min-h-0 flex-1 overflow-y-auto touch-pan-y p-1.5 pb-[calc(6.75rem+env(safe-area-inset-bottom))] sm:p-2.5 sm:pb-28">
+                  <div className="min-h-0 flex-1 overflow-y-auto touch-pan-y p-0.5 pb-[calc(6.75rem+env(safe-area-inset-bottom))] sm:p-1 sm:pb-28">
                     {isLoading ? (
-                      <div className="grid grid-cols-2 gap-1.5 md:portrait:grid-cols-4 md:portrait:gap-2 md:landscape:grid-cols-6 md:landscape:gap-2">
+                      <div className="grid grid-cols-2 gap-0.5 md:portrait:grid-cols-4 md:landscape:grid-cols-6">
                         {[0, 1, 2, 3, 4, 5].map((n) => (
                           <div
                             key={n}
-                            className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950"
+                            className="overflow-hidden rounded-[2px] bg-zinc-900"
                           >
-                            <div className="aspect-[4/3] animate-pulse bg-zinc-200 dark:bg-zinc-800" />
+                            <div className="aspect-square animate-pulse bg-zinc-800" />
                           </div>
                         ))}
                       </div>
@@ -1138,15 +1138,15 @@ export default function App() {
                     )}
                   </div>
                 ) : activeTab === 'recent' ? (
-                  <div className="min-h-0 flex-1 overflow-y-auto touch-pan-y p-1.5 pb-[calc(6.75rem+env(safe-area-inset-bottom))] sm:p-2.5 sm:pb-28">
+                  <div className="min-h-0 flex-1 overflow-y-auto touch-pan-y p-0.5 pb-[calc(6.75rem+env(safe-area-inset-bottom))] sm:p-1 sm:pb-28">
                     {isLoading ? (
-                      <div className="grid grid-cols-2 gap-1.5 md:portrait:grid-cols-4 md:portrait:gap-2 md:landscape:grid-cols-6 md:landscape:gap-2">
+                      <div className="grid grid-cols-2 gap-0.5 md:portrait:grid-cols-4 md:landscape:grid-cols-6">
                         {[0, 1, 2, 3, 4, 5].map((n) => (
                           <div
                             key={n}
-                            className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950"
+                            className="overflow-hidden rounded-[2px] bg-zinc-900"
                           >
-                            <div className="aspect-[4/3] animate-pulse bg-zinc-200 dark:bg-zinc-800" />
+                            <div className="aspect-square animate-pulse bg-zinc-800" />
                           </div>
                         ))}
                       </div>
@@ -1175,7 +1175,7 @@ export default function App() {
                       </div>
                     ) : (
                       <>
-                        <div className="mb-2.5 flex items-center justify-between gap-2 px-0.5">
+                        <div className="mb-2 flex items-center justify-between gap-2 px-2 pt-1.5">
                           <div className="flex items-center gap-2 text-xs text-zinc-400 sm:text-sm">
                             <History className="h-4 w-4 text-zinc-500" />
                             <span className="tabular-nums font-medium text-zinc-300">
