@@ -91,6 +91,18 @@ const DEFAULT_GITHUB_REPO = process.env.GITHUB_REPO || 'tuananh566/Image-Library
 const DEFAULT_GITHUB_BRANCH = process.env.GITHUB_BRANCH || 'main';
 const DEVICE_VERIFY_CODE = process.env.DEVICE_VERIFY_CODE || '123456';
 const DEVICE_TOKEN_COOKIE = 'khoanh_device_token';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
+const SUPER_ADMIN_PASSWORD = process.env.SUPER_ADMIN_PASSWORD || 'tuananh';
+const SUPER_ADMIN_TOKEN = crypto
+  .createHash('sha256')
+  .update(`khoanh-super:${SUPER_ADMIN_PASSWORD}`)
+  .digest('hex');
+
+function timingSafeEqualString(a: string, b: string): boolean {
+  const hashA = crypto.createHash('sha256').update(a).digest();
+  const hashB = crypto.createHash('sha256').update(b).digest();
+  return crypto.timingSafeEqual(hashA, hashB);
+}
 
 interface TrustedDeviceRecord {
   id: string;
@@ -423,6 +435,12 @@ function describeApiActivity(
     return {
       category: 'device',
       action: status >= 400 ? 'Xác thực thiết bị thất bại' : 'Xác thực thiết bị mới',
+    };
+  }
+  if (p === '/api/admin/verify') {
+    return {
+      category: 'device',
+      action: status >= 400 ? 'Mở khóa quyền quản trị thất bại' : 'Mở khóa quyền quản trị',
     };
   }
   if (p === '/api/device/logout') {
@@ -2637,11 +2655,44 @@ async function startServer() {
     }
   });
 
-  // View server activity logs (Super-admin `tuananh` mode only)
+  // Verify management password on server (no credentials stored in client bundle)
+  app.post('/api/admin/verify', express.json({ limit: '16kb' }), (req, res) => {
+    const raw = typeof req.body?.password === 'string' ? req.body.password.trim() : '';
+    if (!raw) {
+      res.status(400).json({ error: 'Vui lòng nhập mật khẩu.' });
+      return;
+    }
+
+    if (timingSafeEqualString(raw, SUPER_ADMIN_PASSWORD)) {
+      res.json({ ok: true, unlimited: true, superToken: SUPER_ADMIN_TOKEN });
+      return;
+    }
+
+    if (timingSafeEqualString(raw, ADMIN_PASSWORD)) {
+      res.json({ ok: true, unlimited: false });
+      return;
+    }
+
+    res.status(401).json({
+      code: 'INVALID_ADMIN_PASSWORD',
+      error: 'Mật khẩu không đúng. Vui lòng thử lại.',
+    });
+  });
+
+  const isAuthorizedSuperAdmin = (req: Request): boolean => {
+    const hdr = req.header('x-super-admin') || '';
+    if (!hdr) return false;
+    return (
+      timingSafeEqualString(hdr, SUPER_ADMIN_TOKEN) ||
+      timingSafeEqualString(hdr, SUPER_ADMIN_PASSWORD)
+    );
+  };
+
+  // View server activity logs (Super-admin mode only)
   app.get('/api/system/logs', (req, res) => {
-    if (req.header('x-super-admin') !== 'tuananh') {
+    if (!isAuthorizedSuperAdmin(req)) {
       res.status(403).json({
-        error: 'Chức năng xem log server chỉ khả dụng khi mở khóa bằng mật khẩu đặc biệt.',
+        error: 'Chức năng xem log server chỉ khả dụng với quyền quản trị cấp cao.',
       });
       return;
     }
@@ -2685,9 +2736,9 @@ async function startServer() {
 
   app.delete('/api/system/logs', async (req, res, next) => {
     try {
-      if (req.header('x-super-admin') !== 'tuananh') {
+      if (!isAuthorizedSuperAdmin(req)) {
         res.status(403).json({
-          error: 'Chức năng xóa log server chỉ khả dụng khi mở khóa bằng mật khẩu đặc biệt.',
+          error: 'Chức năng xóa log server chỉ khả dụng với quyền quản trị cấp cao.',
         });
         return;
       }

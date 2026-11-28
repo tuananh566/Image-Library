@@ -429,7 +429,7 @@ export function CategoriesView({
           <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-6 py-12 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
             {canManage
               ? 'Bạn chưa tạo danh mục nào. Nhấn nút dấu + ở thanh dưới cùng để tạo danh mục mới.'
-              : 'Chưa có danh mục nào. Vào Cài đặt để xác thực Admin nếu cần tạo danh mục mới.'}
+              : 'Chưa có danh mục nào. Vào Cài đặt để mở khóa quyền quản trị nếu cần tạo danh mục mới.'}
           </div>
         ) : (
           <div className={`grid ${gridColsClass} gap-1.5 sm:gap-2.5`}>

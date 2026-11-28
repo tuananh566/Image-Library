@@ -47,6 +47,7 @@ import {
   syncLocalIndexedDbToServer,
   updateServerImageMetadata,
   uploadServerImagesBatch,
+  verifyAdminPassword,
   type BackupImportProgress,
 } from './lib/serverVault';
 
@@ -1371,17 +1372,16 @@ export default function App() {
             adminExpiresAt={adminExpiresAt}
             currentDevice={currentDevice}
             onCurrentDeviceUpdated={(updated) => setCurrentDevice(updated)}
-            onAuthenticateAdmin={(password) => {
-              const normalized = password.trim();
-              if (normalized === 'tuananh') {
-                setAdminExpiresAt(grantAdminSession({ unlimited: true }));
-                return true;
-              }
-              if (normalized === 'admin') {
-                setAdminExpiresAt(grantAdminSession());
-                return true;
-              }
-              return false;
+            onAuthenticateAdmin={async (password) => {
+              const result = await verifyAdminPassword(password);
+              if (!result.ok) return false;
+              setAdminExpiresAt(
+                grantAdminSession({
+                  unlimited: result.unlimited,
+                  superToken: result.superToken,
+                })
+              );
+              return true;
             }}
             onLogoutAdmin={logoutAdmin}
             stats={stats}

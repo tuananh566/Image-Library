@@ -69,7 +69,7 @@ interface SettingsModalProps {
   adminExpiresAt?: number | null;
   currentDevice?: TrustedDeviceInfo | null;
   onCurrentDeviceUpdated?: (device: TrustedDeviceInfo) => void;
-  onAuthenticateAdmin: (password: string) => boolean;
+  onAuthenticateAdmin: (password: string) => Promise<boolean> | boolean;
   onLogoutAdmin: () => void;
   stats: StorageStats;
   onExportBackup: () => Promise<void>;
@@ -123,6 +123,7 @@ export function SettingsModal({
   const [adminPassword, setAdminPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [trustedDevices, setTrustedDevices] = useState<TrustedDeviceInfo[]>([]);
   const [devicesLoading, setDevicesLoading] = useState(false);
@@ -495,7 +496,7 @@ export function SettingsModal({
         subtitle: 'Xuất nhập JSON, bản sao lưu tự động 1 giờ và dữ liệu mẫu',
         valueText: isAdmin
           ? `${stats.imageCount} ảnh · ${formatFileSize(stats.totalBytes)}`
-          : 'Cần Admin',
+          : 'Cần mở khóa',
         valueTone: isAdmin ? 'default' : 'muted',
         iconBgClass: 'bg-sky-500 text-white',
         icon: <HardDrive className="h-4 w-4" />,
@@ -506,7 +507,7 @@ export function SettingsModal({
         title: 'Cập nhật từ GitHub',
         subtitle: 'Kiểm tra phiên bản mới và kéo mã nguồn an toàn',
         valueText: !isAdmin
-          ? 'Cần Admin'
+          ? 'Cần mở khóa'
           : githubStatus?.hasUpdate
             ? 'Có bản mới'
             : githubStatus?.currentCommit?.shortSha || 'Đã đồng bộ',
@@ -567,22 +568,31 @@ export function SettingsModal({
   }, [menuItems]);
 
   const currentSectionTitle = useMemo(() => {
-    if (!isAdmin) return 'Xác thực Admin';
+    if (!isAdmin) return 'Xác thực quyền quản trị';
     if (activeSection === 'root') return 'Cài đặt';
     return menuItems.find((m) => m.id === activeSection)?.title || 'Cài đặt';
   }, [isAdmin, activeSection, menuItems]);
 
   if (!isOpen) return null;
 
-  const handleAdminSubmit = (e: React.FormEvent) => {
+  const handleAdminSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const ok = onAuthenticateAdmin(adminPassword);
-    if (ok) {
-      setAdminPassword('');
-      setAuthError(null);
-      setActiveSection('root');
-    } else {
-      setAuthError('Mật khẩu Admin không đúng. Vui lòng thử lại.');
+    if (!adminPassword.trim() || isAuthenticating) return;
+    setIsAuthenticating(true);
+    setAuthError(null);
+    try {
+      const ok = await onAuthenticateAdmin(adminPassword);
+      if (ok) {
+        setAdminPassword('');
+        setAuthError(null);
+        setActiveSection('root');
+      } else {
+        setAuthError('Mật khẩu không đúng. Vui lòng thử lại.');
+      }
+    } catch {
+      setAuthError('Không thể xác thực mật khẩu. Vui lòng thử lại.');
+    } finally {
+      setIsAuthenticating(false);
     }
   };
 
@@ -663,10 +673,10 @@ export function SettingsModal({
 
                 <div className="mt-4 text-center">
                   <h2 className="font-display text-lg font-bold text-zinc-950 dark:text-zinc-50">
-                    Xác thực quyền Admin
+                    Xác thực quyền quản trị
                   </h2>
                   <p className="mt-1.5 text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
-                    Mặc định thiết bị chỉ có quyền xem. Nhập mật khẩu Admin để mở khóa toàn bộ phần cài đặt, thiết bị quen thuộc, sao lưu và cập nhật máy chủ.
+                    Mặc định thiết bị chỉ có quyền xem. Nhập mật khẩu quản trị để mở khóa toàn bộ phần cài đặt, thiết bị quen thuộc, sao lưu và cập nhật máy chủ.
                   </p>
                 </div>
 
@@ -679,8 +689,8 @@ export function SettingsModal({
                         setAdminPassword(e.target.value);
                         if (authError) setAuthError(null);
                       }}
-                      placeholder="Nhập mật khẩu Admin..."
-                      aria-label="Mật khẩu Admin"
+                      placeholder="Nhập mật khẩu..."
+                      aria-label="Mật khẩu quản trị"
                       autoFocus
                       className="h-11 w-full rounded-xl border border-zinc-300 bg-white pl-4 pr-11 text-sm text-zinc-900 focus:border-blue-600 focus:outline-none dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                     />
@@ -706,11 +716,11 @@ export function SettingsModal({
 
                   <button
                     type="submit"
-                    disabled={!adminPassword.trim()}
+                    disabled={!adminPassword.trim() || isAuthenticating}
                     className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <ShieldCheck className="h-4 w-4" />
-                    <span>Mở khóa Admin</span>
+                    <span>{isAuthenticating ? 'Đang kiểm tra...' : 'Mở khóa'}</span>
                   </button>
                 </form>
               </div>
@@ -833,7 +843,7 @@ export function SettingsModal({
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-[15px] font-medium text-zinc-900 dark:text-zinc-100">
-                        Quyền Admin
+                        Quyền quản trị
                       </div>
                       <div className="truncate text-xs font-medium text-emerald-600 tabular-nums dark:text-emerald-400">
                         {adminStatusText}
@@ -1531,7 +1541,7 @@ export function SettingsModal({
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-zinc-500 dark:text-zinc-400">
                     <span className="font-medium text-violet-600 dark:text-violet-400">
-                      Chế độ tuananh
+                      Chế độ quản trị cấp cao
                     </span>
                     {logsMeta && (
                       <>

@@ -1,4 +1,5 @@
 import type { Category, VaultImageRecord, VaultImageView } from '../types/vault';
+import { getSuperAdminToken } from './adminAuth';
 import {
   dataUrlToBlob,
   parseBackupFileStreaming,
@@ -850,6 +851,32 @@ export interface ServerActivityLogsResponse {
   memoryMb: number;
 }
 
+export async function verifyAdminPassword(password: string): Promise<{
+  ok: boolean;
+  unlimited?: boolean;
+  superToken?: string;
+}> {
+  const headers = new Headers({ 'Content-Type': 'application/json' });
+  for (const [k, v] of Object.entries(getDeviceAuthHeaders())) {
+    headers.set(k, v);
+  }
+  const res = await fetch('/api/admin/verify', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ password }),
+  });
+  if (res.status === 401) {
+    const payload = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+    if (payload.error === 'DEVICE_NOT_TRUSTED') {
+      notifyDeviceUnauthorized();
+      throw new Error('DEVICE_NOT_TRUSTED');
+    }
+    return { ok: false };
+  }
+  await assertOk(res);
+  return parseJsonResponse<{ ok: boolean; unlimited?: boolean; superToken?: string }>(res);
+}
+
 export async function fetchServerActivityLogs(options?: {
   level?: 'all' | ActivityLogLevel;
   category?: 'all' | ActivityLogCategory;
@@ -862,17 +889,19 @@ export async function fetchServerActivityLogs(options?: {
   if (options?.q?.trim()) params.set('q', options.q.trim());
   if (options?.limit) params.set('limit', String(options.limit));
   const qs = params.toString();
+  const superToken = getSuperAdminToken();
   const res = await apiFetch(`/api/system/logs${qs ? `?${qs}` : ''}`, {
     cache: 'no-store',
-    headers: { 'X-Super-Admin': 'tuananh' },
+    ...(superToken ? { headers: { 'X-Super-Admin': superToken } } : {}),
   });
   return parseJsonResponse<ServerActivityLogsResponse>(res);
 }
 
 export async function clearServerActivityLogs(): Promise<void> {
+  const superToken = getSuperAdminToken();
   await apiFetch('/api/system/logs', {
     method: 'DELETE',
-    headers: { 'X-Super-Admin': 'tuananh' },
+    ...(superToken ? { headers: { 'X-Super-Admin': superToken } } : {}),
   });
 }
 

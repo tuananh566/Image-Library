@@ -360,7 +360,7 @@ export function GalleryGrid({
             ? 'Hãy thử đổi từ khóa tìm kiếm, nới lỏng thẻ tag hoặc xóa bộ lọc đang chọn.'
             : canUpload
             ? 'Kéo thả tệp ảnh vào đây, dán ảnh từ clipboard (Ctrl+V) hoặc nhấn nút thêm ảnh để lưu lên server.'
-            : 'Chưa có ảnh mẫu nào trong thư viện. Vào Cài đặt để xác thực Admin nếu cần thêm ảnh.'}
+            : 'Chưa có ảnh mẫu nào trong thư viện. Vào Cài đặt để mở khóa quyền quản trị nếu cần thêm ảnh.'}
         </p>
         {(hasActiveFilters || canUpload) && (
           <div className="mt-5 flex items-center gap-3">
