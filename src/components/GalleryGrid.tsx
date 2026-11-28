@@ -1,11 +1,17 @@
 import { Check, ChevronDown, ImageIcon, Upload } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { formatFileSize, warmImageUrl } from '../lib/imageProcessor';
+import { formatFileSize, warmDecodedThumbnail, warmImageUrl } from '../lib/imageProcessor';
 import type { Category, ScoredImage, ViewMode } from '../types/vault';
 
 const INITIAL_ALBUM_BATCH_SIZE = 100;
 const LOAD_MORE_STEP = 100;
 const LOOKAHEAD_BUFFER = 100;
+const TABLET_BREAKPOINT_PX = 768;
+
+function getPreviewBufferCount(): number {
+  if (typeof window === 'undefined') return 4;
+  return window.innerWidth >= TABLET_BREAKPOINT_PX ? 8 : 4;
+}
 
 interface GalleryGridProps {
   items: ScoredImage[];
@@ -54,7 +60,7 @@ function ResilientThumbnail({
       alt={alt}
       loading={priority ? 'eager' : 'lazy'}
       fetchPriority={highFetchPriority ? 'high' : undefined}
-      decoding="async"
+      decoding={priority ? 'sync' : 'async'}
       draggable={false}
       referrerPolicy="no-referrer"
       onError={() => setFailed(true)}
@@ -85,7 +91,14 @@ export function GalleryGrid({
   );
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const [visibleCount, setVisibleCount] = useState(INITIAL_ALBUM_BATCH_SIZE);
+  const [previewBuffer, setPreviewBuffer] = useState<number>(() => getPreviewBufferCount());
+  const [viewportRange, setViewportRange] = useState<{ start: number; end: number }>(() => ({
+    start: 0,
+    end: 12,
+  }));
   const gridRootRef = useRef<HTMLDivElement>(null);
+  const itemsContainerRef = useRef<HTMLDivElement>(null);
+  const listBodyRef = useRef<HTMLTableSectionElement>(null);
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
 
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -94,6 +107,7 @@ export function GalleryGrid({
 
   useEffect(() => {
     setVisibleCount(INITIAL_ALBUM_BATCH_SIZE);
+    setViewportRange({ start: 0, end: 12 });
     const scrollRoot = gridRootRef.current?.closest('.overflow-y-auto') as HTMLElement | null;
     if (scrollRoot) {
       scrollRoot.scrollTop = 0;
@@ -105,6 +119,106 @@ export function GalleryGrid({
     [items, visibleCount]
   );
   const remainingCount = Math.max(0, items.length - visibleItems.length);
+
+  // Track visible viewport card indices and warm/decode 4 (mobile) or 8 (tablet+) thumbnails above & below
+  useEffect(() => {
+    const rootEl = gridRootRef.current?.closest('.overflow-y-auto') as HTMLElement | null;
+    if (!rootEl || visibleItems.length === 0) return;
+
+    let rafId: number | null = null;
+    const measureViewportRange = () => {
+      rafId = null;
+      const container = (viewMode === 'list' ? listBodyRef.current : itemsContainerRef.current) as
+        | HTMLElement
+        | null;
+      const children = container?.children;
+      if (!children || children.length === 0) return;
+
+      const rootRect = rootEl.getBoundingClientRect();
+      const viewTop = rootRect.top;
+      const viewBottom = rootRect.bottom;
+      const count = children.length;
+
+      // Binary search for the first card whose bottom >= viewTop
+      let lo = 0;
+      let hi = count - 1;
+      let firstVisible = 0;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const rect = children[mid].getBoundingClientRect();
+        if (rect.bottom >= viewTop) {
+          firstVisible = mid;
+          hi = mid - 1;
+        } else {
+          lo = mid + 1;
+        }
+      }
+
+      // Binary search for the last card whose top <= viewBottom
+      lo = firstVisible;
+      hi = count - 1;
+      let lastVisible = firstVisible;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const rect = children[mid].getBoundingClientRect();
+        if (rect.top <= viewBottom) {
+          lastVisible = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
+      }
+
+      setViewportRange((prev) =>
+        prev.start === firstVisible && prev.end === lastVisible
+          ? prev
+          : { start: firstVisible, end: lastVisible }
+      );
+    };
+
+    const scheduleMeasure = () => {
+      if (rafId !== null) return;
+      rafId = window.requestAnimationFrame(measureViewportRange);
+    };
+
+    const handleResize = () => {
+      const nextBuf = getPreviewBufferCount();
+      setPreviewBuffer((prev) => (prev === nextBuf ? prev : nextBuf));
+      scheduleMeasure();
+    };
+
+    measureViewportRange();
+    rootEl.addEventListener('scroll', scheduleMeasure, { passive: true });
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      if (rafId !== null) window.cancelAnimationFrame(rafId);
+      rootEl.removeEventListener('scroll', scheduleMeasure);
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [visibleItems.length, viewMode, scopeKey, isSidebarCollapsed]);
+
+  const preloadWindowStart = Math.max(0, viewportRange.start - previewBuffer);
+  const preloadWindowEnd = Math.min(
+    Math.max(0, visibleItems.length - 1),
+    viewportRange.end + previewBuffer
+  );
+
+  // Actively fetch & decode the 4 (mobile) / 8 (tablet+) thumbnails above and below the viewport
+  useEffect(() => {
+    if (visibleItems.length === 0) return;
+
+    // Warm items closest to viewport first: below buffer, then above buffer
+    for (let i = viewportRange.end + 1; i <= preloadWindowEnd; i++) {
+      warmDecodedThumbnail(visibleItems[i]?.image.thumbnailUrl);
+    }
+    for (let i = viewportRange.start - 1; i >= preloadWindowStart; i--) {
+      warmDecodedThumbnail(visibleItems[i]?.image.thumbnailUrl);
+    }
+    for (let i = viewportRange.start; i <= Math.min(viewportRange.end, visibleItems.length - 1); i++) {
+      warmDecodedThumbnail(visibleItems[i]?.image.thumbnailUrl);
+    }
+  }, [visibleItems, viewportRange.start, viewportRange.end, preloadWindowStart, preloadWindowEnd]);
 
   useEffect(() => {
     if (remainingCount <= 0) return;
@@ -286,9 +400,11 @@ export function GalleryGrid({
                 <th className="px-4 py-2.5 text-right">Dung lượng</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+            <tbody ref={listBodyRef} className="divide-y divide-zinc-200 dark:divide-zinc-800">
               {visibleItems.map(({ image }, index) => {
                 const isSelected = selectedIdSet.has(image.id);
+                const isInPreloadWindow =
+                  index >= preloadWindowStart && index <= preloadWindowEnd;
                 const catName = image.categoryId
                   ? categoryMap.get(image.categoryId) || 'Chưa phân loại'
                   : 'Chưa phân loại';
@@ -328,8 +444,10 @@ export function GalleryGrid({
                           <ResilientThumbnail
                             src={image.thumbnailUrl}
                             alt={image.title}
-                            priority={index < 12}
-                            highFetchPriority={index < 6}
+                            priority={isInPreloadWindow}
+                            highFetchPriority={
+                              index >= viewportRange.start && index <= viewportRange.end
+                            }
                             className="h-full w-full object-cover"
                           />
                         </div>
@@ -396,6 +514,7 @@ export function GalleryGrid({
   return (
     <div ref={gridRootRef} className="space-y-3">
       <div
+        ref={itemsContainerRef}
         className={
           isMasonry
             ? `${masonryColsClass} gap-1.5 md:portrait:gap-2 md:landscape:gap-2`
@@ -404,12 +523,14 @@ export function GalleryGrid({
       >
         {visibleItems.map(({ image }, index) => {
           const isSelected = selectedIdSet.has(image.id);
+          const isInPreloadWindow =
+            index >= preloadWindowStart && index <= preloadWindowEnd;
 
           return (
             <article
               key={image.id}
               data-image-card={image.id}
-              className={`group relative overflow-hidden rounded-lg border bg-white [content-visibility:auto] [contain-intrinsic-size:auto_180px] transition-[transform,border-color] duration-150 hover:-translate-y-0.5 active:scale-[0.97] dark:bg-zinc-950 ${
+              className={`group relative overflow-hidden rounded-lg border bg-white transition-[transform,border-color] duration-150 hover:-translate-y-0.5 active:scale-[0.97] dark:bg-zinc-950 ${
                 isMasonry ? 'mb-1.5 break-inside-avoid md:portrait:mb-2 md:landscape:mb-2' : 'flex flex-col'
               } ${
                 isSelected
@@ -452,8 +573,10 @@ export function GalleryGrid({
                 <ResilientThumbnail
                   src={image.thumbnailUrl}
                   alt={image.title}
-                  priority={index < 12}
-                  highFetchPriority={index < 6}
+                  priority={isInPreloadWindow}
+                  highFetchPriority={
+                    index >= viewportRange.start && index <= viewportRange.end
+                  }
                   className={`w-full transition-transform duration-200 group-hover:scale-[1.02] ${
                     isMasonry ? 'h-auto block' : 'h-full object-cover'
                   }`}

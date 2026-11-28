@@ -65,6 +65,8 @@ function replaceFileExtension(fileName: string, newExt: string): string {
 }
 
 const warmedImageUrls = new Set<string>();
+const warmThumbCache = new Map<string, HTMLImageElement>();
+const MAX_WARM_THUMB_CACHE = 120;
 
 export function warmImageUrl(url?: string): void {
   if (!url || typeof window === 'undefined' || warmedImageUrls.has(url)) return;
@@ -77,6 +79,29 @@ export function warmImageUrl(url?: string): void {
   img.decoding = 'async';
   img.referrerPolicy = 'no-referrer';
   img.src = url;
+}
+
+export function warmDecodedThumbnail(url?: string): void {
+  if (!url || typeof window === 'undefined') return;
+  const existing = warmThumbCache.get(url);
+  if (existing) {
+    // Refresh LRU position
+    warmThumbCache.delete(url);
+    warmThumbCache.set(url, existing);
+    return;
+  }
+  if (warmThumbCache.size >= MAX_WARM_THUMB_CACHE) {
+    const oldestKey = warmThumbCache.keys().next().value;
+    if (oldestKey) warmThumbCache.delete(oldestKey);
+  }
+  const img = new Image();
+  img.decoding = 'async';
+  img.referrerPolicy = 'no-referrer';
+  img.src = url;
+  warmThumbCache.set(url, img);
+  if (typeof img.decode === 'function') {
+    void img.decode().catch(() => {});
+  }
 }
 
 function rgbToHex(r: number, g: number, b: number): string {

@@ -648,7 +648,7 @@ export function CategoriesView({
                       }
                     }
                   }}
-                  className={`group relative flex w-full flex-col overflow-hidden rounded-lg border bg-zinc-200 [content-visibility:auto] [contain-intrinsic-size:auto_240px] transition-[transform,border-color,opacity] duration-150 focus-visible:outline-2 focus-visible:outline-blue-600 dark:bg-zinc-800 ${
+                  className={`group relative flex w-full flex-col overflow-hidden rounded-lg border bg-zinc-200 transition-[transform,border-color,opacity] duration-150 focus-visible:outline-2 focus-visible:outline-blue-600 dark:bg-zinc-800 ${
                     isReorderMode
                       ? 'cursor-default'
                       : 'cursor-pointer hover:-translate-y-0.5 active:scale-[0.97]'
