@@ -1,66 +1,39 @@
-import { ArrowLeft, Menu } from 'lucide-react';
+import { ArrowLeft, Plus, Settings } from 'lucide-react';
 
 interface TopBarProps {
   title: string;
   onBack?: () => void;
   canGoBack?: boolean;
-  onToggleMobileSidebar?: () => void;
-  isDesktopSidebarCollapsed?: boolean;
-  onToggleDesktopSidebar?: () => void;
+  onOpenSettings: () => void;
+  canAdd?: boolean;
+  onAddClick?: () => void;
+  addTitle?: string;
 }
 
 export function TopBar({
   title,
   onBack,
   canGoBack = false,
-  onToggleMobileSidebar,
-  isDesktopSidebarCollapsed = false,
-  onToggleDesktopSidebar,
+  onOpenSettings,
+  canAdd = false,
+  onAddClick,
+  addTitle = 'Thêm mới',
 }: TopBarProps) {
   return (
-    <header className="standalone-safe-top sticky top-0 z-30 shrink-0 border-b border-zinc-800 bg-zinc-950">
-      <div className="relative mx-auto flex h-15 max-w-[1600px] items-center justify-between gap-2 px-3 sm:h-16 sm:gap-2.5 sm:px-6">
-        {/* Top-Left Control: Menu (3 lines) on left, Back arrow on right when inside a category */}
-        <div className="z-10 inline-flex h-11 shrink-0 items-center rounded-xl border border-zinc-800 bg-zinc-900/80 p-1 sm:h-12">
-          {onToggleMobileSidebar && (
-            <button
-              type="button"
-              onClick={onToggleMobileSidebar}
-              aria-label="Mở thanh danh mục"
-              className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 md:hidden"
-            >
-              <Menu className="h-[22px] w-[22px]" />
-            </button>
-          )}
-
-          {onToggleDesktopSidebar && (
-            <button
-              type="button"
-              onClick={onToggleDesktopSidebar}
-              title={isDesktopSidebarCollapsed ? 'Mở thanh mục lục' : 'Thu gọn thanh mục lục'}
-              aria-label={isDesktopSidebarCollapsed ? 'Mở thanh mục lục' : 'Thu gọn thanh mục lục'}
-              className="hidden h-9 w-9 items-center justify-center rounded-lg text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 sm:h-10 sm:w-10 md:inline-flex"
-            >
-              <Menu className="h-[22px] w-[22px]" />
-            </button>
-          )}
-
+    <header className="standalone-safe-top sticky top-0 z-30 shrink-0 border-b border-zinc-800 bg-zinc-950/92 backdrop-blur-md">
+      <div className="relative mx-auto flex h-14 max-w-[1600px] items-center justify-between gap-2 px-3 sm:h-16 sm:gap-2.5 sm:px-6">
+        {/* Top-Left Back Button (only shown when navigating back) */}
+        <div className="z-10 flex min-w-11 shrink-0 items-center sm:min-w-12">
           {onBack && canGoBack && (
-            <>
-              <span
-                aria-hidden="true"
-                className="mx-1 block h-6 w-px bg-zinc-700"
-              />
-              <button
-                type="button"
-                onClick={onBack}
-                title="Trở lại"
-                aria-label="Trở lại"
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 sm:h-10 sm:w-10"
-              >
-                <ArrowLeft className="h-5 w-5 sm:h-[22px] sm:w-[22px]" />
-              </button>
-            </>
+            <button
+              type="button"
+              onClick={onBack}
+              title="Trở lại"
+              aria-label="Trở lại"
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-zinc-800 bg-zinc-900/85 text-zinc-200 transition-colors hover:bg-zinc-800 hover:text-zinc-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 sm:h-11 sm:w-11"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </button>
           )}
         </div>
 
@@ -69,7 +42,29 @@ export function TopBar({
           {title}
         </h1>
 
-        <div className="w-11 shrink-0 sm:w-12" />
+        {/* Top-Right Actions: Admin Add + Settings */}
+        <div className="z-10 inline-flex h-10 shrink-0 items-center gap-0.5 rounded-full border border-zinc-800 bg-zinc-900/85 p-1 sm:h-11">
+          {canAdd && onAddClick && (
+            <button
+              type="button"
+              onClick={onAddClick}
+              title={addTitle}
+              aria-label={addTitle}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-zinc-200 transition-colors hover:bg-zinc-800 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 sm:h-9 sm:w-9"
+            >
+              <Plus className="h-[19px] w-[19px]" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            title="Cài đặt"
+            aria-label="Cài đặt"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-full text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 sm:h-9 sm:w-9"
+          >
+            <Settings className="h-[19px] w-[19px]" />
+          </button>
+        </div>
       </div>
     </header>
   );

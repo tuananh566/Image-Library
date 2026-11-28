@@ -5,6 +5,7 @@ import {
   ChevronLeft,
   ChevronRight,
   GripHorizontal,
+  History,
   ImageIcon,
   ImagePlus,
   Pencil,
@@ -16,7 +17,6 @@ import {
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { generateId, isImageFile, stripFileExtension } from '../lib/imageProcessor';
 import type { Category, VaultImageView } from '../types/vault';
-import { FloatingAddButton } from './FloatingAddButton';
 
 interface PendingAlbumFile {
   localId: string;
@@ -42,6 +42,11 @@ interface CategoriesViewProps {
   onReorderCategories?: (orderedIds: string[]) => Promise<void>;
   onOpenCategoryInLibrary: (categoryId: string, sourceRect?: DOMRect) => void;
   canManage?: boolean;
+  recentImages?: VaultImageView[];
+  totalRecentCount?: number;
+  onOpenRecentImage?: (id: string) => void;
+  onOpenRecentTab?: () => void;
+  createRequestVersion?: number;
 }
 
 const PRESET_COLORS = [
@@ -72,6 +77,11 @@ export function CategoriesView({
   onReorderCategories,
   onOpenCategoryInLibrary,
   canManage = true,
+  recentImages = [],
+  totalRecentCount = 0,
+  onOpenRecentImage,
+  onOpenRecentTab,
+  createRequestVersion = 0,
 }: CategoriesViewProps) {
   const createFileInputId = useId();
   const createCameraInputId = useId();
@@ -229,11 +239,23 @@ export function CategoriesView({
     setColor((prev) => getRandomPresetColor(prev));
   };
 
+  const lastHandledCreateVersionRef = useRef(0);
+
   const openCreateModal = () => {
     if (!canManage) return;
     resetCreateDraft();
     setIsCreateOpen(true);
   };
+
+  useEffect(() => {
+    if (createRequestVersion > 0 && createRequestVersion !== lastHandledCreateVersionRef.current) {
+      lastHandledCreateVersionRef.current = createRequestVersion;
+      if (canManage) {
+        resetCreateDraft();
+        setIsCreateOpen(true);
+      }
+    }
+  }, [createRequestVersion, canManage]);
 
   const closeCreateModal = () => {
     if (isSubmitting) return;
@@ -482,7 +504,7 @@ export function CategoriesView({
   return (
     <div className="relative flex h-full min-h-0 flex-col">
       {/* Scrollable Category Area */}
-      <div className="min-h-0 flex-1 overflow-y-auto touch-pan-y p-1.5 pb-28 sm:p-2.5 sm:pb-28">
+      <div className="min-h-0 flex-1 overflow-y-auto touch-pan-y p-1.5 pb-[calc(6.75rem+env(safe-area-inset-bottom))] sm:p-2.5 sm:pb-28">
         {canManage && onReorderCategories && orderedCategories.length > 1 && isReorderMode && (
           <div className="mb-3 flex w-full flex-wrap items-center justify-between gap-2 rounded-xl border border-blue-900/80 bg-blue-950/40 px-3 py-2 sm:px-3.5">
             <div className="flex min-w-0 items-center gap-2 text-xs font-medium text-blue-200">
@@ -594,6 +616,55 @@ export function CategoriesView({
               </button>
             </div>
           </div>
+        )}
+
+        {!isBatchMode && !isReorderMode && recentImages.length > 0 && (
+          <section
+            aria-label="Đã xem gần đây"
+            className="mb-3 rounded-xl border border-zinc-800/90 bg-zinc-900/50 p-2.5 sm:mb-3.5 sm:p-3"
+          >
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <History className="h-4 w-4 shrink-0 text-zinc-400" />
+                <h2 className="truncate text-xs font-semibold tracking-wide text-zinc-200 sm:text-sm">
+                  Đã xem gần đây
+                </h2>
+                <span className="tabular-nums text-[11px] font-medium text-zinc-500">
+                  {totalRecentCount > 0 ? totalRecentCount : recentImages.length}
+                </span>
+              </div>
+              {onOpenRecentTab && (
+                <button
+                  type="button"
+                  onClick={onOpenRecentTab}
+                  className="inline-flex shrink-0 items-center gap-0.5 rounded-lg px-2 py-1 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+                >
+                  <span>Xem tất cả</span>
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+            <div className="flex gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {recentImages.slice(0, 12).map((img) => (
+                <button
+                  key={img.id}
+                  type="button"
+                  onClick={() => onOpenRecentImage?.(img.id)}
+                  title={img.title || img.fileName}
+                  className="group relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 transition-transform active:scale-95 sm:h-20 sm:w-20"
+                >
+                  <img
+                    src={img.thumbnailUrl}
+                    alt={img.title}
+                    loading="eager"
+                    decoding="async"
+                    draggable={false}
+                    className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
+                  />
+                </button>
+              ))}
+            </div>
+          </section>
         )}
 
         {displayedCategories.length === 0 ? (
@@ -846,14 +917,6 @@ export function CategoriesView({
           </div>
         )}
       </div>
-
-      {/* Bottom-Right Create Album Button */}
-      <FloatingAddButton
-        canAdd={canManage}
-        onAddClick={openCreateModal}
-        addTitle="Tạo album mới"
-        addAriaLabel="Tạo album mới"
-      />
 
       {/* Create Album Modal (with optional image upload & library selection) */}
       {isCreateOpen && (

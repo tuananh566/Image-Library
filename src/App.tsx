@@ -1,12 +1,11 @@
-import { Smartphone, Upload } from 'lucide-react';
+import { History, LayoutGrid, Smartphone, Trash2, Upload } from 'lucide-react';
 import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BatchActionBar } from './components/BatchActionBar';
+import { BottomDock } from './components/BottomDock';
 import { CategoriesView } from './components/CategoriesView';
 import { DeviceVerificationGate } from './components/DeviceVerificationGate';
-import { FloatingAddButton } from './components/FloatingAddButton';
 import { GalleryGrid } from './components/GalleryGrid';
-import { DEFAULT_SIDEBAR_STEP, Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
 import {
   clearAdminSession,
@@ -66,10 +65,17 @@ const UploadModal = lazy(() =>
     default: m.UploadModal,
   }))
 );
+import {
+  clearRecentlyViewedIds,
+  readRecentlyViewedIds,
+  recordRecentlyViewedId,
+  writeRecentlyViewedIds,
+} from './lib/recentlyViewed';
 import { filterAndScoreImages } from './lib/smartSearch';
 import type {
   AppTab,
   Category,
+  ScoredImage,
   SearchFilterState,
   StorageStats,
   VaultImageRecord,
@@ -145,17 +151,16 @@ export default function App() {
     sortBy: 'relevance',
   });
 
-  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-  const [isDesktopSidebarCollapsed, setIsDesktopSidebarCollapsed] = useState(false);
-  const [sidebarWidthStep, setSidebarWidthStep] = useState(DEFAULT_SIDEBAR_STEP);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [createAlbumTrigger, setCreateAlbumTrigger] = useState(0);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [droppedFiles, setDroppedFiles] = useState<File[]>([]);
   const [isDraggingGlobal, setIsDraggingGlobal] = useState(false);
-  const mobileEdgeTouchStartRef = useRef<{ x: number; y: number } | null>(null);
 
   const [inspectedImageId, setInspectedImageId] = useState<string | null>(null);
   const [hasOpenedInspector, setHasOpenedInspector] = useState(false);
+  const [recentIds, setRecentIds] = useState<string[]>(() => readRecentlyViewedIds());
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
@@ -252,21 +257,41 @@ export default function App() {
   }, [activeTab, filters.categoryId]);
 
   useEffect(() => {
-    if (activeTab !== 'library') {
-      setIsBatchMode(false);
-      setSelectedIds([]);
-    }
+    setIsBatchMode(false);
+    setSelectedIds([]);
   }, [activeTab]);
+
+  useEffect(() => {
+    if (!inspectedImageId) {
+      setRecentIds(readRecentlyViewedIds());
+      return;
+    }
+    if (!images.some((img) => img.id === inspectedImageId)) return;
+    const updated = recordRecentlyViewedId(inspectedImageId);
+    if (activeTab === 'library') {
+      setRecentIds(updated);
+    }
+  }, [inspectedImageId, images, activeTab]);
+
+  useEffect(() => {
+    if (isLoading) return;
+    const validIds = new Set(images.map((img) => img.id));
+    setRecentIds((prev) => {
+      const filtered = prev.filter((id) => validIds.has(id));
+      if (filtered.length === prev.length) return prev;
+      return writeRecentlyViewedIds(filtered);
+    });
+  }, [images, isLoading]);
 
   const isViewingSpecificCategory =
     activeTab === 'library' &&
     filters.categoryId !== 'all' &&
     filters.categoryId !== 'uncategorized';
 
-  const canGoBack = isViewingSpecificCategory;
+  const canGoBack = isViewingSpecificCategory || activeTab === 'recent';
 
   const handleGoBack = useCallback(() => {
-    if (!isViewingSpecificCategory) return;
+    if (!canGoBack) return;
 
     const origin = lastCategoryOriginRef.current;
     setViewTransition({
@@ -286,7 +311,7 @@ export default function App() {
 
     isGoingBackRef.current = true;
     setActiveTab('categories');
-  }, [isViewingSpecificCategory, navHistory]);
+  }, [canGoBack, navHistory]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -535,25 +560,16 @@ export default function App() {
     return () => window.removeEventListener('paste', handlePaste);
   }, [isAdmin]);
 
-  // Computed counts & storage stats
-  const { categoryCounts, stats } = useMemo(() => {
-    const cCounts: Record<string, number> = {};
+  // Computed storage stats
+  const stats = useMemo<StorageStats>(() => {
     let totalBytes = 0;
-
     for (const img of images) {
       totalBytes += img.size;
-      if (img.categoryId) cCounts[img.categoryId] = (cCounts[img.categoryId] || 0) + 1;
     }
-
-    const storageStats: StorageStats = {
+    return {
       imageCount: images.length,
       categoryCount: categories.length,
       totalBytes,
-    };
-
-    return {
-      categoryCounts: cCounts,
-      stats: storageStats,
     };
   }, [images, categories.length]);
 
@@ -561,6 +577,19 @@ export default function App() {
     () => filterAndScoreImages(images, categories, filters),
     [images, categories, filters]
   );
+
+  const recentScoredItems = useMemo<ScoredImage[]>(() => {
+    if (recentIds.length === 0 || images.length === 0) return [];
+    const byId = new Map(images.map((img) => [img.id, img]));
+    const result: ScoredImage[] = [];
+    for (const id of recentIds) {
+      const img = byId.get(id);
+      if (img) {
+        result.push({ image: img, score: 1, matchedFields: [] });
+      }
+    }
+    return result;
+  }, [recentIds, images]);
 
   const hasActiveFilters =
     filters.query.trim() !== '' ||
@@ -804,19 +833,27 @@ export default function App() {
     }
   };
 
+  const inspectorItems = useMemo<ScoredImage[]>(() => {
+    if (activeTab === 'recent' || activeTab === 'categories') {
+      return recentScoredItems;
+    }
+    return scoredItems;
+  }, [activeTab, recentScoredItems, scoredItems]);
+
   const inspectedIndex = useMemo(
-    () => scoredItems.findIndex((s) => s.image.id === inspectedImageId),
-    [scoredItems, inspectedImageId]
+    () => inspectorItems.findIndex((s) => s.image.id === inspectedImageId),
+    [inspectorItems, inspectedImageId]
   );
   const inspectedImage =
-    inspectedIndex >= 0 ? scoredItems[inspectedIndex].image : null;
+    inspectedIndex >= 0 ? inspectorItems[inspectedIndex].image : null;
   const filmstripImages = useMemo(
-    () => scoredItems.map((s) => s.image),
-    [scoredItems]
+    () => inspectorItems.map((s) => s.image),
+    [inspectorItems]
   );
 
   const headerTitle = useMemo(() => {
     if (activeTab === 'categories') return 'Album';
+    if (activeTab === 'recent') return 'Đã xem gần đây';
     if (filters.categoryId === 'all') return 'Tất cả ảnh mẫu';
     if (filters.categoryId === 'uncategorized') return 'Chưa phân loại';
     return categories.find((c) => c.id === filters.categoryId)?.name || 'Album';
@@ -911,59 +948,21 @@ export default function App() {
         title={headerTitle}
         onBack={handleGoBack}
         canGoBack={canGoBack}
-        onToggleMobileSidebar={() => setIsMobileSidebarOpen((v) => !v)}
-        isDesktopSidebarCollapsed={isDesktopSidebarCollapsed}
-        onToggleDesktopSidebar={() => setIsDesktopSidebarCollapsed((v) => !v)}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+        canAdd={isAdmin && (activeTab === 'library' || activeTab === 'categories')}
+        addTitle={activeTab === 'categories' ? 'Tạo album mới' : 'Thêm ảnh mẫu'}
+        onAddClick={() => {
+          if (!isAdmin) return;
+          if (activeTab === 'categories') {
+            setCreateAlbumTrigger((v) => v + 1);
+          } else {
+            setDroppedFiles([]);
+            setIsUploadOpen(true);
+          }
+        }}
       />
 
-      <div
-        className="mx-auto flex min-h-0 w-full max-w-[1600px] flex-1 overflow-hidden"
-        onTouchStart={(e) => {
-          if (e.touches.length === 1 && e.touches[0].clientX <= 28) {
-            mobileEdgeTouchStartRef.current = {
-              x: e.touches[0].clientX,
-              y: e.touches[0].clientY,
-            };
-          } else {
-            mobileEdgeTouchStartRef.current = null;
-          }
-        }}
-        onTouchMove={(e) => {
-          const start = mobileEdgeTouchStartRef.current;
-          if (!start || e.touches.length !== 1) return;
-          const dx = e.touches[0].clientX - start.x;
-          const dy = Math.abs(e.touches[0].clientY - start.y);
-          if (dx > 48 && dx > dy * 1.5) {
-            mobileEdgeTouchStartRef.current = null;
-            setIsMobileSidebarOpen(true);
-          }
-        }}
-        onTouchEnd={() => {
-          mobileEdgeTouchStartRef.current = null;
-        }}
-      >
-        <Sidebar
-          activeTab={activeTab}
-          onSelectTab={(tab) => {
-            setViewTransition({ mode: 'fade', originX: '50%', originY: '50%' });
-            setActiveTab(tab);
-          }}
-          categories={categories}
-          totalCount={images.length}
-          categoryCounts={categoryCounts}
-          selectedCategoryId={filters.categoryId}
-          onSelectCategory={(id) => {
-            setViewTransition({ mode: 'fade', originX: '50%', originY: '50%' });
-            setFilters((prev) => ({ ...prev, categoryId: id }));
-          }}
-          onOpenSettings={() => setIsSettingsOpen(true)}
-          isOpenMobile={isMobileSidebarOpen}
-          onCloseMobile={() => setIsMobileSidebarOpen(false)}
-          isDesktopCollapsed={isDesktopSidebarCollapsed}
-          onSetDesktopCollapsed={setIsDesktopSidebarCollapsed}
-          widthStepIndex={sidebarWidthStep}
-          onWidthStepChange={setSidebarWidthStep}
-        />
+      <div className="mx-auto flex min-h-0 w-full max-w-[1600px] flex-1 overflow-hidden">
 
         <main ref={mainRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {isAdmin &&
@@ -1009,61 +1008,181 @@ export default function App() {
                   className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-zinc-950"
                 >
                 {activeTab === 'library' ? (
-                  <>
-                    <div className="min-h-0 flex-1 overflow-y-auto touch-pan-y p-1.5 pb-28 sm:p-2.5 sm:pb-28">
-                      {isAdmin && isBatchMode && (
-                        <BatchActionBar
-                          selectedCount={selectedIds.length}
-                          categories={categories}
-                          onSelectAll={() =>
-                            setSelectedIds(scoredItems.map((s) => s.image.id))
-                          }
-                          onClearSelection={() => setSelectedIds([])}
-                          onExitBatchMode={() => {
-                            setIsBatchMode(false);
-                            setSelectedIds([]);
-                          }}
-                          onAssignCategory={async (catId) => {
-                            if (!isAdmin) return;
-                            await batchUpdateServerImages(selectedIds, { categoryId: catId });
-                            setSelectedIds([]);
-                            setIsBatchMode(false);
-                            await reloadVault();
-                          }}
-                          onDeleteSelected={async () => {
-                            if (!isAdmin) return;
-                            await deleteServerImages(selectedIds);
-                            setSelectedIds([]);
-                            setIsBatchMode(false);
-                            await reloadVault();
-                          }}
-                        />
-                      )}
+                  <div className="min-h-0 flex-1 overflow-y-auto touch-pan-y p-1.5 pb-[calc(6.75rem+env(safe-area-inset-bottom))] sm:p-2.5 sm:pb-28">
+                    {isAdmin && isBatchMode && (
+                      <BatchActionBar
+                        selectedCount={selectedIds.length}
+                        categories={categories}
+                        onSelectAll={() =>
+                          setSelectedIds(scoredItems.map((s) => s.image.id))
+                        }
+                        onClearSelection={() => setSelectedIds([])}
+                        onExitBatchMode={() => {
+                          setIsBatchMode(false);
+                          setSelectedIds([]);
+                        }}
+                        onAssignCategory={async (catId) => {
+                          if (!isAdmin) return;
+                          await batchUpdateServerImages(selectedIds, { categoryId: catId });
+                          setSelectedIds([]);
+                          setIsBatchMode(false);
+                          await reloadVault();
+                        }}
+                        onDeleteSelected={async () => {
+                          if (!isAdmin) return;
+                          await deleteServerImages(selectedIds);
+                          setSelectedIds([]);
+                          setIsBatchMode(false);
+                          await reloadVault();
+                        }}
+                      />
+                    )}
 
-                      {isLoading ? (
-                        <div
-                          className={`grid gap-1.5 md:portrait:gap-2 md:landscape:gap-2 ${
-                            isDesktopSidebarCollapsed
-                              ? 'grid-cols-2 md:portrait:grid-cols-4 md:landscape:grid-cols-6'
-                              : 'grid-cols-2 md:portrait:grid-cols-3 md:landscape:grid-cols-5'
-                          }`}
-                        >
-                          {[0, 1, 2, 3, 4, 5].map((n) => (
-                            <div
-                              key={n}
-                              className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950"
-                            >
-                              <div className="aspect-[4/3] animate-pulse bg-zinc-200 dark:bg-zinc-800" />
-                            </div>
-                          ))}
+                    {isLoading ? (
+                      <div className="grid grid-cols-2 gap-1.5 md:portrait:grid-cols-4 md:portrait:gap-2 md:landscape:grid-cols-6 md:landscape:gap-2">
+                        {[0, 1, 2, 3, 4, 5].map((n) => (
+                          <div
+                            key={n}
+                            className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950"
+                          >
+                            <div className="aspect-[4/3] animate-pulse bg-zinc-200 dark:bg-zinc-800" />
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <GalleryGrid
+                        items={scoredItems}
+                        categories={categories}
+                        viewMode={viewMode}
+                        scopeKey={`${activeTab}:${filters.categoryId}:${filters.query}:${filters.aspectFilter}:${filters.sortBy}`}
+                        isSidebarCollapsed={true}
+                        isBatchMode={isBatchMode}
+                        selectedIds={selectedIds}
+                        onToggleSelect={(id) =>
+                          setSelectedIds((prev) =>
+                            prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+                          )
+                        }
+                        onLongPressSelect={
+                          isAdmin
+                            ? (id) => {
+                                setIsBatchMode(true);
+                                setSelectedIds((prev) =>
+                                  prev.includes(id) ? prev : [...prev, id]
+                                );
+                              }
+                            : undefined
+                        }
+                        onOpenImage={(id) => {
+                          setHasOpenedInspector(true);
+                          setInspectedImageId(id);
+                        }}
+                        onOpenUpload={() => {
+                          if (!isAdmin) return;
+                          setDroppedFiles([]);
+                          setIsUploadOpen(true);
+                        }}
+                        canUpload={isAdmin}
+                        hasActiveFilters={hasActiveFilters}
+                        onClearFilters={clearAllFilters}
+                      />
+                    )}
+                  </div>
+                ) : activeTab === 'recent' ? (
+                  <div className="min-h-0 flex-1 overflow-y-auto touch-pan-y p-1.5 pb-[calc(6.75rem+env(safe-area-inset-bottom))] sm:p-2.5 sm:pb-28">
+                    {isAdmin && isBatchMode && (
+                      <BatchActionBar
+                        selectedCount={selectedIds.length}
+                        categories={categories}
+                        onSelectAll={() =>
+                          setSelectedIds(recentScoredItems.map((s) => s.image.id))
+                        }
+                        onClearSelection={() => setSelectedIds([])}
+                        onExitBatchMode={() => {
+                          setIsBatchMode(false);
+                          setSelectedIds([]);
+                        }}
+                        onAssignCategory={async (catId) => {
+                          if (!isAdmin) return;
+                          await batchUpdateServerImages(selectedIds, { categoryId: catId });
+                          setSelectedIds([]);
+                          setIsBatchMode(false);
+                          await reloadVault();
+                        }}
+                        onDeleteSelected={async () => {
+                          if (!isAdmin) return;
+                          await deleteServerImages(selectedIds);
+                          setSelectedIds([]);
+                          setIsBatchMode(false);
+                          await reloadVault();
+                        }}
+                      />
+                    )}
+
+                    {isLoading ? (
+                      <div className="grid grid-cols-2 gap-1.5 md:portrait:grid-cols-4 md:portrait:gap-2 md:landscape:grid-cols-6 md:landscape:gap-2">
+                        {[0, 1, 2, 3, 4, 5].map((n) => (
+                          <div
+                            key={n}
+                            className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950"
+                          >
+                            <div className="aspect-[4/3] animate-pulse bg-zinc-200 dark:bg-zinc-800" />
+                          </div>
+                        ))}
+                      </div>
+                    ) : recentScoredItems.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-zinc-800 bg-zinc-950 px-6 py-16 text-center">
+                        <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900 text-zinc-400">
+                          <History className="h-6 w-6" />
                         </div>
-                      ) : (
+                        <p className="font-display text-sm font-semibold text-zinc-100 sm:text-base">
+                          Chưa có ảnh đã xem gần đây
+                        </p>
+                        <p className="mt-1 max-w-xs text-xs text-zinc-400 sm:text-sm">
+                          Các mẫu bánh bạn mở xem trên thiết bị này sẽ tự động được lưu lại để mở nhanh khi cần.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setViewTransition({ mode: 'fade', originX: '50%', originY: '50%' });
+                            setActiveTab('categories');
+                          }}
+                          className="mt-5 inline-flex h-9 items-center gap-2 rounded-lg bg-zinc-100 px-4 text-xs font-semibold text-zinc-950 transition-colors hover:bg-white sm:text-sm"
+                        >
+                          <LayoutGrid className="h-4 w-4" />
+                          <span>Xem Album</span>
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="mb-2.5 flex items-center justify-between gap-2 px-0.5">
+                          <div className="flex items-center gap-2 text-xs text-zinc-400 sm:text-sm">
+                            <History className="h-4 w-4 text-zinc-500" />
+                            <span className="tabular-nums font-medium text-zinc-300">
+                              {recentScoredItems.length} ảnh đã xem gần đây
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              clearRecentlyViewedIds();
+                              setRecentIds([]);
+                              setIsBatchMode(false);
+                              setSelectedIds([]);
+                            }}
+                            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 text-xs font-medium text-zinc-300 transition-colors hover:border-zinc-700 hover:bg-zinc-800 hover:text-zinc-100"
+                          >
+                            <Trash2 className="h-3.5 w-3.5 text-zinc-400" />
+                            <span>Xóa lịch sử</span>
+                          </button>
+                        </div>
+
                         <GalleryGrid
-                          items={scoredItems}
+                          items={recentScoredItems}
                           categories={categories}
                           viewMode={viewMode}
-                          scopeKey={`${activeTab}:${filters.categoryId}:${filters.query}:${filters.aspectFilter}:${filters.sortBy}`}
-                          isSidebarCollapsed={isDesktopSidebarCollapsed}
+                          scopeKey="recent"
+                          isSidebarCollapsed={true}
                           isBatchMode={isBatchMode}
                           selectedIds={selectedIds}
                           onToggleSelect={(id) =>
@@ -1085,35 +1204,31 @@ export default function App() {
                             setHasOpenedInspector(true);
                             setInspectedImageId(id);
                           }}
-                          onOpenUpload={() => {
-                            if (!isAdmin) return;
-                            setDroppedFiles([]);
-                            setIsUploadOpen(true);
-                          }}
-                          canUpload={isAdmin}
-                          hasActiveFilters={hasActiveFilters}
+                          onOpenUpload={() => {}}
+                          canUpload={false}
+                          hasActiveFilters={false}
                           onClearFilters={clearAllFilters}
                         />
-                      )}
-                    </div>
-
-                    {/* Bottom-Right Add Circle */}
-                    <FloatingAddButton
-                      canAdd={isAdmin}
-                      onAddClick={() => {
-                        setDroppedFiles([]);
-                        setIsUploadOpen(true);
-                      }}
-                      addTitle="Thêm ảnh mẫu"
-                      addAriaLabel="Thêm ảnh mẫu"
-                    />
-                  </>
+                      </>
+                    )}
+                  </div>
                 ) : (
                   <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                     <CategoriesView
                       categories={categories}
                       images={images}
                       canManage={isAdmin}
+                      createRequestVersion={createAlbumTrigger}
+                      recentImages={recentScoredItems.slice(0, 12).map((s) => s.image)}
+                      totalRecentCount={recentScoredItems.length}
+                      onOpenRecentImage={(id) => {
+                        setHasOpenedInspector(true);
+                        setInspectedImageId(id);
+                      }}
+                      onOpenRecentTab={() => {
+                        setViewTransition({ mode: 'fade', originX: '50%', originY: '50%' });
+                        setActiveTab('recent');
+                      }}
                       onCreateCategory={handleFullCreateCategory}
                       onUpdateCategory={async (cat) => {
                         if (!isAdmin) return;
@@ -1181,6 +1296,39 @@ export default function App() {
         </main>
       </div>
 
+      <BottomDock
+        activeTab={
+          activeTab === 'library' && filters.categoryId !== 'all'
+            ? 'categories'
+            : activeTab
+        }
+        onSelectTab={(tab) => {
+          setViewTransition({ mode: 'fade', originX: '50%', originY: '50%' });
+          if (tab === 'library') {
+            setFilters((prev) => ({ ...prev, categoryId: 'all' }));
+          }
+          setActiveTab(tab);
+        }}
+        searchQuery={filters.query}
+        onSearchQueryChange={(q) => {
+          setFilters((prev) => ({
+            ...prev,
+            query: q,
+            categoryId: q.trim() !== '' && activeTab !== 'library' ? 'all' : prev.categoryId,
+          }));
+          if (q.trim() !== '' && activeTab !== 'library') {
+            setViewTransition({ mode: 'fade', originX: '50%', originY: '50%' });
+            setActiveTab('library');
+          }
+        }}
+        onClearSearch={() => {
+          setFilters((prev) => ({ ...prev, query: '' }));
+        }}
+        isSearchOpen={isSearchOpen}
+        onToggleSearch={() => setIsSearchOpen((v) => !v)}
+        onCloseSearch={() => setIsSearchOpen(false)}
+      />
+
       {isSettingsOpen && (
         <Suspense fallback={null}>
           <SettingsModal
@@ -1221,6 +1369,8 @@ export default function App() {
             onClearAllData={async () => {
               if (!isAdmin) return;
               await clearServerVault();
+              clearRecentlyViewedIds();
+              setRecentIds([]);
               clearAllFilters();
               await reloadVault();
             }}
@@ -1258,16 +1408,16 @@ export default function App() {
             images={filmstripImages}
             categories={categories}
             hasPrev={inspectedIndex > 0}
-            hasNext={inspectedIndex >= 0 && inspectedIndex < scoredItems.length - 1}
+            hasNext={inspectedIndex >= 0 && inspectedIndex < inspectorItems.length - 1}
             onSelectImage={(id) => setInspectedImageId(id)}
             onPrev={() => {
               if (inspectedIndex > 0) {
-                setInspectedImageId(scoredItems[inspectedIndex - 1].image.id);
+                setInspectedImageId(inspectorItems[inspectedIndex - 1].image.id);
               }
             }}
             onNext={() => {
-              if (inspectedIndex >= 0 && inspectedIndex < scoredItems.length - 1) {
-                setInspectedImageId(scoredItems[inspectedIndex + 1].image.id);
+              if (inspectedIndex >= 0 && inspectedIndex < inspectorItems.length - 1) {
+                setInspectedImageId(inspectorItems[inspectedIndex + 1].image.id);
               }
             }}
             onClose={() => setInspectedImageId(null)}
