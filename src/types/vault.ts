@@ -23,6 +23,7 @@ export interface VaultImageRecord {
   fileName: string;
   notes: string;
   categoryId: string | null;
+  categoryIds?: string[];
   tags: string[];
   width: number;
   height: number;
@@ -36,6 +37,22 @@ export interface VaultImageRecord {
   updatedAt: number;
   blob: Blob;
   thumbnailBlob: Blob;
+}
+
+export function getImageCategoryIds(img: {
+  categoryId?: string | null;
+  categoryIds?: string[];
+}): string[] {
+  const set = new Set<string>();
+  if (Array.isArray(img.categoryIds)) {
+    for (const id of img.categoryIds) {
+      if (id) set.add(String(id));
+    }
+  }
+  if (img.categoryId) {
+    set.add(String(img.categoryId));
+  }
+  return Array.from(set);
 }
 
 export interface VaultImageView

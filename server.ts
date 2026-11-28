@@ -31,6 +31,7 @@ interface ServerImageRecord {
   fileName: string;
   notes: string;
   categoryId: string | null;
+  categoryIds?: string[];
   tags: string[];
   width: number;
   height: number;
@@ -45,6 +46,22 @@ interface ServerImageRecord {
   storedFile: string;
   storedThumbFile: string;
   thumbMimeType?: string;
+}
+
+function getServerImageCategoryIds(img: {
+  categoryId?: string | null;
+  categoryIds?: unknown;
+}): string[] {
+  const set = new Set<string>();
+  if (Array.isArray(img.categoryIds)) {
+    for (const id of img.categoryIds) {
+      if (id) set.add(String(id));
+    }
+  }
+  if (img.categoryId) {
+    set.add(String(img.categoryId));
+  }
+  return Array.from(set);
 }
 
 interface VaultDataFile {
@@ -434,6 +451,9 @@ function describeApiActivity(
 
   if (p === '/api/categories' && method === 'POST') {
     return { category: 'category', action: 'Lưu danh mục / album' };
+  }
+  if (p === '/api/categories/merge-create') {
+    return { category: 'category', action: 'Tạo album mới từ các mục đã chọn' };
   }
   if (p === '/api/categories/reorder') {
     return { category: 'category', action: 'Sắp xếp thứ tự danh mục' };
@@ -1458,6 +1478,14 @@ async function restoreFromInternalAutoBackup(): Promise<{
         fileName: String(item.fileName || `restored${ext}`),
         notes: String(item.notes || ''),
         categoryId: item.categoryId ? String(item.categoryId) : null,
+        ...(Array.isArray((item as { categoryIds?: unknown }).categoryIds)
+          ? {
+              categoryIds: getServerImageCategoryIds({
+                categoryId: item.categoryId ? String(item.categoryId) : null,
+                categoryIds: (item as { categoryIds?: unknown }).categoryIds,
+              }),
+            }
+          : {}),
         tags: Array.isArray(item.tags) ? item.tags.map(String) : [],
         width: Number(item.width) || 800,
         height: Number(item.height) || 600,
@@ -2996,6 +3024,14 @@ async function startServer() {
           fileName: String(rawMeta.fileName || mainFile.originalname || `${safeId}${ext}`),
           notes: String(rawMeta.notes || ''),
           categoryId: rawMeta.categoryId ? String(rawMeta.categoryId) : null,
+          ...(Array.isArray(rawMeta.categoryIds)
+            ? {
+                categoryIds: getServerImageCategoryIds({
+                  categoryId: rawMeta.categoryId ? String(rawMeta.categoryId) : null,
+                  categoryIds: rawMeta.categoryIds,
+                }),
+              }
+            : {}),
           tags: Array.isArray(rawMeta.tags) ? rawMeta.tags.map(String) : [],
           width: Number(rawMeta.width) || 800,
           height: Number(rawMeta.height) || 600,
@@ -3097,6 +3133,14 @@ async function startServer() {
             fileName,
             notes: String(rawMeta.notes || ''),
             categoryId: rawMeta.categoryId ? String(rawMeta.categoryId) : null,
+            ...(Array.isArray(rawMeta.categoryIds)
+              ? {
+                  categoryIds: getServerImageCategoryIds({
+                    categoryId: rawMeta.categoryId ? String(rawMeta.categoryId) : null,
+                    categoryIds: rawMeta.categoryIds,
+                  }),
+                }
+              : {}),
             tags: Array.isArray(rawMeta.tags) ? rawMeta.tags.map(String) : [],
             width: Number(rawMeta.width) || 800,
             height: Number(rawMeta.height) || 600,
@@ -3210,6 +3254,14 @@ async function startServer() {
             fileName,
             notes: String(rawMeta.notes || ''),
             categoryId: rawMeta.categoryId ? String(rawMeta.categoryId) : null,
+            ...(Array.isArray(rawMeta.categoryIds)
+              ? {
+                  categoryIds: getServerImageCategoryIds({
+                    categoryId: rawMeta.categoryId ? String(rawMeta.categoryId) : null,
+                    categoryIds: rawMeta.categoryIds,
+                  }),
+                }
+              : {}),
             tags: Array.isArray(rawMeta.tags) ? rawMeta.tags.map(String) : [],
             width: Number(rawMeta.width) || 800,
             height: Number(rawMeta.height) || 600,
@@ -3292,7 +3344,7 @@ async function startServer() {
     }
   });
 
-  // Delete category & unassign its images
+  // Delete category & unassign its ID from images (preserving any other merged albums)
   app.delete('/api/categories/:id', async (req, res, next) => {
     try {
       const catId = req.params.id;
@@ -3302,9 +3354,19 @@ async function startServer() {
           nextVault: {
             ...vault,
             categories: vault.categories.filter((c) => c.id !== catId),
-            images: vault.images.map((img) =>
-              img.categoryId === catId ? { ...img, categoryId: null, updatedAt: now } : img
-            ),
+            images: vault.images.map((img) => {
+              const currentIds = getServerImageCategoryIds(img);
+              if (!currentIds.includes(catId)) return img;
+              const remainingIds = currentIds.filter((id) => id !== catId);
+              const nextPrimary =
+                img.categoryId === catId ? (remainingIds[0] ?? null) : img.categoryId;
+              return {
+                ...img,
+                categoryId: nextPrimary,
+                categoryIds: remainingIds,
+                updatedAt: now,
+              };
+            }),
           },
           result: true,
         };
@@ -3317,7 +3379,7 @@ async function startServer() {
     }
   });
 
-  // Batch delete categories & unassign their images
+  // Batch delete categories & unassign their IDs from images
   app.post('/api/categories/batch-delete', async (req, res, next) => {
     try {
       const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : [];
@@ -3333,11 +3395,21 @@ async function startServer() {
           nextVault: {
             ...vault,
             categories: vault.categories.filter((c) => !idSet.has(c.id)),
-            images: vault.images.map((img) =>
-              img.categoryId && idSet.has(img.categoryId)
-                ? { ...img, categoryId: null, updatedAt: now }
-                : img
-            ),
+            images: vault.images.map((img) => {
+              const currentIds = getServerImageCategoryIds(img);
+              if (!currentIds.some((id) => idSet.has(id))) return img;
+              const remainingIds = currentIds.filter((id) => !idSet.has(id));
+              const nextPrimary =
+                img.categoryId && idSet.has(img.categoryId)
+                  ? (remainingIds[0] ?? null)
+                  : img.categoryId;
+              return {
+                ...img,
+                categoryId: nextPrimary,
+                categoryIds: remainingIds,
+                updatedAt: now,
+              };
+            }),
           },
           result: true,
         };
@@ -3345,6 +3417,88 @@ async function startServer() {
 
       broadcastVaultUpdated();
       res.json({ ok: true, count: idSet.size });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Create a new album by merging selected albums (preserving originals) or selected images
+  app.post('/api/categories/merge-create', async (req, res, next) => {
+    try {
+      const body = (req.body || {}) as {
+        category?: Partial<CategoryRecord>;
+        sourceCategoryIds?: unknown;
+        sourceImageIds?: unknown;
+      };
+      const rawCat = body.category;
+      if (!rawCat || !rawCat.id || !String(rawCat.name || '').trim()) {
+        res.status(400).json({ error: 'Invalid category payload' });
+        return;
+      }
+
+      const sourceCategorySet = new Set(
+        Array.isArray(body.sourceCategoryIds)
+          ? body.sourceCategoryIds.map(String).filter(Boolean)
+          : []
+      );
+      const sourceImageSet = new Set(
+        Array.isArray(body.sourceImageIds)
+          ? body.sourceImageIds.map(String).filter(Boolean)
+          : []
+      );
+
+      const result = await withVaultLock(async (vault) => {
+        const now = Date.now();
+        const maxOrder = vault.categories.reduce(
+          (max, c) => Math.max(max, Number.isFinite(c.order) ? c.order : -1),
+          -1
+        );
+        const newCat: CategoryRecord = {
+          id: String(rawCat.id),
+          name: String(rawCat.name).trim(),
+          description: String(rawCat.description || ''),
+          color: String(rawCat.color || '#2563EB'),
+          order: Number.isFinite(rawCat.order) ? Number(rawCat.order) : maxOrder + 1,
+          createdAt: Number(rawCat.createdAt) || now,
+        };
+
+        let addedImageCount = 0;
+        const nextImages = vault.images.map((img) => {
+          const imgCats = getServerImageCategoryIds(img);
+          const matchesAlbum =
+            sourceCategorySet.size > 0 &&
+            imgCats.some((cid) => sourceCategorySet.has(cid));
+          const matchesImage = sourceImageSet.has(img.id);
+          if (!matchesAlbum && !matchesImage) return img;
+
+          addedImageCount += 1;
+          const mergedIds = Array.from(new Set([...imgCats, newCat.id]));
+          return {
+            ...img,
+            categoryId: img.categoryId || newCat.id,
+            categoryIds: mergedIds,
+            updatedAt: now,
+          };
+        });
+
+        const exists = vault.categories.some((c) => c.id === newCat.id);
+        const nextCategories = exists
+          ? vault.categories.map((c) => (c.id === newCat.id ? newCat : c))
+          : [...vault.categories, newCat];
+
+        return {
+          nextVault: {
+            ...vault,
+            seeded: true,
+            categories: nextCategories,
+            images: nextImages,
+          },
+          result: { category: newCat, addedImageCount },
+        };
+      });
+
+      broadcastVaultUpdated();
+      res.status(201).json(result);
     } catch (err) {
       next(err);
     }
@@ -3410,13 +3564,19 @@ async function startServer() {
         const existing = vault.images.find((i) => i.id === id);
         if (!existing) return { result: null };
 
+        const nextCategoryPatch =
+          patch.categoryId !== undefined
+            ? {
+                categoryId: patch.categoryId ? String(patch.categoryId) : null,
+                categoryIds: patch.categoryId ? [String(patch.categoryId)] : [],
+              }
+            : {};
+
         const nextImg: ServerImageRecord = {
           ...existing,
           ...(patch.title !== undefined ? { title: String(patch.title) } : {}),
           ...(patch.notes !== undefined ? { notes: String(patch.notes) } : {}),
-          ...(patch.categoryId !== undefined
-            ? { categoryId: patch.categoryId ? String(patch.categoryId) : null }
-            : {}),
+          ...nextCategoryPatch,
           ...(patch.tags !== undefined && Array.isArray(patch.tags)
             ? { tags: patch.tags.map(String) }
             : {}),
@@ -3467,7 +3627,10 @@ async function startServer() {
             return {
               ...img,
               ...(patch.categoryId !== undefined
-                ? { categoryId: patch.categoryId ? String(patch.categoryId) : null }
+                ? {
+                    categoryId: patch.categoryId ? String(patch.categoryId) : null,
+                    categoryIds: patch.categoryId ? [String(patch.categoryId)] : [],
+                  }
                 : {}),
               ...(patch.isFavorite !== undefined
                 ? { isFavorite: Boolean(patch.isFavorite) }
@@ -3789,6 +3952,14 @@ async function startServer() {
           fileName: String(item.fileName || `restored${ext}`),
           notes: String(item.notes || ''),
           categoryId: item.categoryId ? String(item.categoryId) : null,
+          ...(Array.isArray((item as { categoryIds?: unknown }).categoryIds)
+            ? {
+                categoryIds: getServerImageCategoryIds({
+                  categoryId: item.categoryId ? String(item.categoryId) : null,
+                  categoryIds: (item as { categoryIds?: unknown }).categoryIds,
+                }),
+              }
+            : {}),
           tags: Array.isArray(item.tags) ? item.tags.map(String) : [],
           width: Number(item.width) || 800,
           height: Number(item.height) || 600,

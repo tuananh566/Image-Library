@@ -265,6 +265,19 @@ export async function deleteServerCategories(ids: string[]): Promise<void> {
   });
 }
 
+export async function mergeCreateServerCategory(input: {
+  category: Category;
+  sourceCategoryIds?: string[];
+  sourceImageIds?: string[];
+}): Promise<{ category: Category; addedImageCount: number }> {
+  const res = await apiFetch('/api/categories/merge-create', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  return parseJsonResponse<{ category: Category; addedImageCount: number }>(res);
+}
+
 export async function reorderServerCategories(orderedIds: string[]): Promise<Category[]> {
   const res = await apiFetch('/api/categories/reorder', {
     method: 'POST',
@@ -480,6 +493,7 @@ export async function importServerBackupFile(
           fileName,
           notes: item.notes || '',
           categoryId: item.categoryId ?? null,
+          ...(Array.isArray(item.categoryIds) ? { categoryIds: item.categoryIds } : {}),
           tags: Array.isArray(item.tags) ? item.tags : [],
           width: item.width || processed.width,
           height: item.height || processed.height,

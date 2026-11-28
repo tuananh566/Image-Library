@@ -1,8 +1,9 @@
-import type {
-  Category,
-  ScoredImage,
-  SearchFilterState,
-  VaultImageView,
+import {
+  getImageCategoryIds,
+  type Category,
+  type ScoredImage,
+  type SearchFilterState,
+  type VaultImageView,
 } from '../types/vault';
 
 export function normalizeVietnamese(input: string): string {
@@ -111,11 +112,12 @@ export function filterAndScoreImages(
   const scored: ScoredImage[] = [];
 
   for (const img of images) {
-    if (filters.categoryId === 'uncategorized' && img.categoryId !== null) continue;
+    const imgCategoryIds = getImageCategoryIds(img);
+    if (filters.categoryId === 'uncategorized' && imgCategoryIds.length > 0) continue;
     if (
       filters.categoryId !== 'all' &&
       filters.categoryId !== 'uncategorized' &&
-      img.categoryId !== filters.categoryId
+      !imgCategoryIds.includes(filters.categoryId)
     ) {
       continue;
     }
@@ -126,7 +128,10 @@ export function filterAndScoreImages(
 
     if (parsed.ratioFilter && img.aspectRatioType !== parsed.ratioFilter) continue;
 
-    const categoryName = img.categoryId ? categoryMap.get(img.categoryId)?.name || '' : '';
+    const categoryName = imgCategoryIds
+      .map((cid) => categoryMap.get(cid)?.name || '')
+      .filter(Boolean)
+      .join(' ');
 
     if (parsed.categoryFilter) {
       if (!normalizeVietnamese(categoryName).includes(parsed.categoryFilter)) continue;

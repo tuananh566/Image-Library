@@ -1,7 +1,12 @@
 import { Check, ChevronDown, ImageIcon, Upload } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { formatFileSize, warmDecodedThumbnail, warmImageUrl } from '../lib/imageProcessor';
-import type { Category, ScoredImage, ViewMode } from '../types/vault';
+import {
+  getImageCategoryIds,
+  type Category,
+  type ScoredImage,
+  type ViewMode,
+} from '../types/vault';
 
 const INITIAL_ALBUM_BATCH_SIZE = 100;
 const LOAD_MORE_STEP = 100;
@@ -405,9 +410,14 @@ export function GalleryGrid({
                 const isSelected = selectedIdSet.has(image.id);
                 const isInPreloadWindow =
                   index >= preloadWindowStart && index <= preloadWindowEnd;
-                const catName = image.categoryId
-                  ? categoryMap.get(image.categoryId) || 'Chưa phân loại'
-                  : 'Chưa phân loại';
+                const catIds = getImageCategoryIds(image);
+                const catName =
+                  catIds.length > 0
+                    ? catIds
+                        .map((cid) => categoryMap.get(cid))
+                        .filter(Boolean)
+                        .join(', ') || 'Chưa phân loại'
+                    : 'Chưa phân loại';
 
                 return (
                   <tr
@@ -586,15 +596,15 @@ export function GalleryGrid({
                 <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/20 opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
 
                 {isBatchMode && (
-                  <div className="pointer-events-none absolute left-2.5 top-2.5">
+                  <div className="pointer-events-none absolute bottom-2 right-2">
                     <span
-                      className={`flex h-6 w-6 items-center justify-center rounded-md border transition-colors ${
+                      className={`flex h-6 w-6 items-center justify-center rounded-full transition-colors ${
                         isSelected
-                          ? 'border-blue-500 bg-blue-600 text-white shadow'
-                          : 'border-white/80 bg-black/45 text-transparent'
+                          ? 'bg-[#0A84FF] text-white ring-2 ring-white shadow-md'
+                          : 'border-2 border-white/85 bg-black/40 text-transparent shadow-sm'
                       }`}
                     >
-                      <Check className="h-3.5 w-3.5" />
+                      <Check className="h-3.5 w-3.5" strokeWidth={2.75} />
                     </span>
                   </div>
                 )}

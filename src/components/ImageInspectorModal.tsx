@@ -79,36 +79,6 @@ function getNearestPreviewImages(
   return nearest;
 }
 
-function getCardZoomOffset(imageId: string): { x: number; y: number; scale: number } {
-  if (typeof window === 'undefined' || typeof document === 'undefined') {
-    return { x: 0, y: 0, scale: 0.72 };
-  }
-  const selectorId = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(imageId) : imageId;
-  const el = document.querySelector(`[data-image-card="${selectorId}"]`);
-  if (!el) return { x: 0, y: 0, scale: 0.72 };
-  const rect = el.getBoundingClientRect();
-  if (rect.width <= 0 || rect.height <= 0) {
-    return { x: 0, y: 0, scale: 0.72 };
-  }
-  if (rect.bottom < 0 || rect.top > window.innerHeight) {
-    return { x: 0, y: 0, scale: 0.72 };
-  }
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
-  const cardCenterX = rect.left + rect.width / 2;
-  const cardCenterY = rect.top + rect.height / 2;
-  const stageCenterX = vw / 2;
-  const stageCenterY = Math.max(120, (vh - 130) / 2);
-  const targetWidth = Math.min(vw * 0.82, 680);
-  const scale = Math.max(0.2, Math.min(0.68, rect.width / targetWidth));
-
-  return {
-    x: cardCenterX - stageCenterX,
-    y: cardCenterY - stageCenterY,
-    scale,
-  };
-}
-
 export function ImageInspectorModal(props: ImageInspectorModalProps) {
   return (
     <MotionConfig reducedMotion="user">
@@ -170,7 +140,6 @@ function ImageInspectorContent({
   hasNextRef.current = hasNext;
 
   const transformRef = useRef({ scale: 1, x: 0, y: 0 });
-  const zoomOrigin = useMemo(() => getCardZoomOffset(image.id), [image.id]);
 
   const clampPan = useCallback((x: number, y: number, scale: number) => {
     if (scale <= 1) return { x: 0, y: 0 };
@@ -249,8 +218,8 @@ function ImageInspectorContent({
     const el = imgRef.current;
     if (el) {
       el.style.transition = 'none';
-      el.style.opacity = '0.65';
-      el.style.transform = 'translate3d(0px, 0px, 0) scale(0.985)';
+      el.style.opacity = '0.5';
+      el.style.transform = 'translate3d(0px, 0px, 0) scale(1)';
       requestAnimationFrame(() => {
         applyTransform(1, 0, 0, true);
       });
@@ -852,20 +821,10 @@ function ImageInspectorContent({
           <motion.div
             ref={stageRef}
             data-image-stage="true"
-            initial={{
-              opacity: 0,
-              x: zoomOrigin.x,
-              y: zoomOrigin.y,
-              scale: zoomOrigin.scale,
-            }}
-            animate={{ opacity: 1, x: 0, y: 0, scale: 1 }}
-            exit={{
-              opacity: 0,
-              x: zoomOrigin.x,
-              y: zoomOrigin.y,
-              scale: zoomOrigin.scale,
-            }}
-            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18, ease: 'easeOut' }}
             onClick={(e) => {
               if (e.target === e.currentTarget && !suppressBackdropClickRef.current) {
                 onClose();
